@@ -176,7 +176,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                     print(location_lat_coord,location_lon_coord)
 
                                     with viz_col1:
-                                        st.write(f"Selected Location: {location_idx}")
+                                        st.write(f"Selected Location: {location_idx+1}")
                                         # load image of location 
                                         
                                         # this is for wimbledon low resolution 
