@@ -1,0 +1,11 @@
+streamlit
+json
+requests
+plotly-express
+shapely
+wkt
+geopandas
+base64
+io
+pillow
+pandas
