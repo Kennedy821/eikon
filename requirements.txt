@@ -4,7 +4,7 @@ requests
 plotly-express
 shapely
 geopandas
-base64
-io
+#base64
+#io
 pillow
 pandas
