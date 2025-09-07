@@ -173,16 +173,18 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                                     location_lat_coord = gdf[gdf.index==location_idx].geometry.centroid.y.mean()
                                     location_lon_coord = gdf[gdf.index==location_idx].geometry.centroid.x.mean()
+                                    location_id - gdf[gdf.index==location_idx]["location_id"].values[0]
                                     print(location_lat_coord,location_lon_coord)
 
                                     with viz_col1:
                                         st.write(f"Selected Location: {location_idx+1}")
+                                        st.write(f"{location_id}")
                                         # load image of location 
                                         
                                         # this is for wimbledon low resolution 
                                         payload = {"text": "placeholder",
                                                 "location": [location_lat_coord, location_lon_coord],
-                                                "resolution":"medium"}
+                                                "resolution":"high"}
                                         r = requests.post(st.secrets["general"]["api_url_2"], json=payload, timeout=120)
                                         if r.ok:
                                             b64_str = r.json()["location_image"]
