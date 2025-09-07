@@ -173,7 +173,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                                     location_lat_coord = gdf[gdf.index==location_idx].geometry.centroid.y.mean()
                                     location_lon_coord = gdf[gdf.index==location_idx].geometry.centroid.x.mean()
-                                    location_id - gdf[gdf.index==location_idx]["location_id"].values[0]
+                                    location_id = gdf[gdf.index==location_idx]["location_id"].values[0]
                                     print(location_lat_coord,location_lon_coord)
 
                                     with viz_col1:
