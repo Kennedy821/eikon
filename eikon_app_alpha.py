@@ -87,10 +87,11 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 col1, col2 = st.columns(2) 
 
                 search_api_endpoint = st.secrets["general"]["api_url_1"]
-
+                site_api_key = st.secrets["general"]["user_admin_api_key"]
                 payload = {"prompt": st.session_state.user_search_prompt,
                     "h3_level_integer":9,
-                    "top_k": number_of_results}
+                    "top_k": number_of_results,
+                    "api_key": site_api_key}
                 r = requests.post(search_api_endpoint, json=payload, timeout=120)
                 if r.ok:
                     json_obj = json.loads(r.json()["query_search_results"])
@@ -184,7 +185,8 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                         # this is for wimbledon low resolution 
                                         payload = {"text": "placeholder",
                                                 "location": [location_lat_coord, location_lon_coord],
-                                                "resolution":"high"}
+                                                "resolution":"high",
+                                                "api_key": site_api_key}
                                         r = requests.post(st.secrets["general"]["api_url_2"], json=payload, timeout=120)
                                         if r.ok:
                                             b64_str = r.json()["location_image"]
