@@ -8,3 +8,4 @@ geopandas
 #io
 pillow
 pandas
+h3
