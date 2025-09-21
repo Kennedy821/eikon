@@ -9,20 +9,13 @@ import geopandas as gp
 import base64, io, requests
 from PIL import Image
 import pandas as pd
-from sentence_transformers import SentenceTransformer
-import geopandas as gp
-import pandas as pd
 import h3
 import shapely
 import numpy as np
 import time
-import folium
+# import folium
 import os
-from flask import Flask, request, send_file, jsonify
-from fuzzywuzzy import fuzz
-import polars as pl
 import re
-import uuid
 
 # define some functions 
 def clear_inputs() -> None:
@@ -33,8 +26,7 @@ def clear_inputs() -> None:
     st.session_state["number_of_results"] = ""      # resets <input>
     st.session_state["df_results"] = ""      # resets <input>
     st.session_state["init_gdf"] = ""      # resets <input>
-    st.session_state["llm_r_model"] = ""      # resets <input>
-    st.session_state["llm_r_tokenizer"] = ""      # resets <input>
+
 
 
     # st.session_state["df"] = None       # hides the cards
@@ -75,19 +67,6 @@ def flatten_list(nested_list):
             flat_list.append(item)
     return flat_list
 
-def save_interaction(prompt, completion,location_description, interaction_sentiment, filepath=None):
-    output_dir = "./search_feedback/"
-    if filepath is None:
-        filepath = uuid.uuid4()
-        filepath = f"{output_dir}search_feedback-{interaction_sentiment}-{filepath}.json"
-    interaction_dict = {
-        "prompt": prompt,
-        "completion": completion,
-        "location_description": location_description
-    }
-    # append each interaction as its own JSON object per line
-    with open(filepath, "a") as f:
-        f.write(json.dumps(interaction_dict) + "\n")
 
 # make a function to use in the web application side
 def process_users_initial_prompt(user_prompt_str, user_api_key):
