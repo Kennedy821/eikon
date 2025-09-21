@@ -416,6 +416,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     # this will now add on the location descriptions paragraph for immediately contiguous locations
                     search_results_gdf["contig_loc_descriptions"] = search_results_gdf["location_id"].apply(lambda x: get_contiguous_location_descriptions(origin_location=x,
                                                                                                                                                             kring_integer=1,
+                                                                                                                                                            user_api_key=site_api_key))
                           
                 top_k_results_gdf = search_results_gdf.sort_values("search_results", ascending=False).head(number_of_results*2).reset_index().drop(columns="index")
                 top_k_results_gdf = top_k_results_gdf[["location_id","description","contig_loc_descriptions","search_results","wkt_geom"]].reset_index().drop(columns="index")
