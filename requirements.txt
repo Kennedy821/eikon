@@ -8,6 +8,6 @@ plotly-express
 #io
 pillow
 pandas
-geopandas==1.0.0
-h3==3.7.7
-shapely==2.0.4
+geopandas
+h3
+shapely
