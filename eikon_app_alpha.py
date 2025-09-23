@@ -277,7 +277,7 @@ if spatial_resolution_for_search != "London - all":
 user_search_prompt = st.text_input("Type what you'd like to search for here...")
 st.session_state.user_search_prompt = user_search_prompt
 
-effort_selection = st.selectbox("Select how many results you'd like", ["","quick","moderate","exhaustive"])
+effort_selection = st.selectbox("Select how much effort you want to designate to your search", ["","quick","moderate","exhaustive"])
 if effort_selection=="quick":
     number_of_results = 10
     st.session_state.number_of_results = number_of_results
