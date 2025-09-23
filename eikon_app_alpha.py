@@ -9,7 +9,6 @@ import geopandas as gp
 import base64, io, requests
 from PIL import Image
 import pandas as pd
-import h3
 import shapely
 import numpy as np
 import time
@@ -27,27 +26,6 @@ def clear_inputs() -> None:
     st.session_state["df_results"] = ""      # resets <input>
     st.session_state["init_gdf"] = ""      # resets <input>
 
-
-
-    # st.session_state["df"] = None       # hides the cards
-    # st.session_state["mic_audio"] = None
-
-def generate_polygons_from_h3_column(h3_series, merge=False):
-    import shapely
-    processed_geometries = []
-    for i in h3_series:
-        h3_boundary = h3.h3_to_geo_boundary(i) 
-        # convert this into a shapely geometry object
-        # print(h3_boundary)
-        # shapely needs the latitudes and longitudes in the reverse order they come out of H3 in
-        # re-arrange the boundary tuple
-        rearranged_boundary_list = []
-        for x,y in h3_boundary:
-            reordered_coord = (y,x)
-            rearranged_boundary_list.append(reordered_coord)
-        poly_object = shapely.Polygon(rearranged_boundary_list)
-        processed_geometries.append(poly_object)
-    return processed_geometries
 
 def flatten_list(nested_list):
     """
@@ -76,7 +54,7 @@ def process_users_initial_prompt(user_prompt_str, user_api_key):
     payload = {"prompt": user_prompt_str,
               "api_key":user_api_key
               }
-    r = requests.post(base_api_address, json=payload, timeout=120)
+    r = requests.post(base_api_address, json=payload, timeout=200)
     if r.ok:
         processed_user_prompt = r.json()["processed_user_prompt"]
         return processed_user_prompt
@@ -90,7 +68,7 @@ def search_locations_based_on_prompt_first_pass(user_search_prompt_str, h3_level
         "top_k": number_of_results,
         "api_key": api_key,
         "lad_filter":lad_filter}
-    r = requests.post(search_api_endpoint, json=payload, timeout=300)
+    r = requests.post(search_api_endpoint, json=payload, timeout=600)
     if r.ok:
         json_obj = json.loads(r.json()["query_search_results"])
 
@@ -138,7 +116,7 @@ def search_locations_based_on_prompt_second_pass(user_search_prompt_str, h3_leve
         "top_k": number_of_results,
         "api_key": api_key,
         "lad_filter":lad_filter}
-    r = requests.post(search_api_endpoint, json=payload, timeout=240)
+    r = requests.post(search_api_endpoint, json=payload, timeout=600)
     if r.ok:
         json_obj = json.loads(r.json()["query_search_results"])
         # st.write(json_obj)
@@ -186,7 +164,7 @@ def get_contiguous_location_descriptions(origin_location,kring_integer, user_api
                "kring_integer":kring_integer,
               "api_key":user_api_key
               }
-    r = requests.post(contiguous_desc_api_endpoint, json=payload, timeout=240)
+    r = requests.post(contiguous_desc_api_endpoint, json=payload, timeout=600)
     if r.ok:
         processed_location_contiguous_description = r.json()["contiguous_location_description"]
         return processed_location_contiguous_description
@@ -206,7 +184,7 @@ def get_ai_evaluation_of_results_df(users_search_original,
                "results_df":results_df.to_json(),
               "api_key":user_api_key
               }
-    r = requests.post(location_evaluator_endpoint, json=payload, timeout=120)
+    r = requests.post(location_evaluator_endpoint, json=payload, timeout=600)
     if r.ok:
         eval_binary_response = r.json()["eval_binary_response"]
         eval_rationale = r.json()["eval_rationale"]
