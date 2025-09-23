@@ -523,14 +523,15 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                     st.write(f"Location description")
                                     location_description = gdf[gdf.index==location_idx]['description'].values[0]
                                     selection_rationale = gdf[gdf.index==location_idx]['ai_model_rationale'].values[0]
+                                    selection_evaluation = gdf[gdf.index==location_idx]["ai_model_evaluation"].values[0]
                                     st.write(f"{location_description}")
                                     st.write(f"{selection_rationale}")
-
-                                    log_search_process_completion(prompt=user_search_prompt,
-                                                                    completion=cleaned_description,
-                                                                    location_description=location_description,
-                                                                    user_api_key=site_api_key,
-                                                                    interaction_sentiment=1)
+                                    if selection_evaluation ==1:
+                                        log_search_process_completion(prompt=user_search_prompt,
+                                                                        completion=cleaned_description,
+                                                                        location_description=location_description,
+                                                                        user_api_key=site_api_key,
+                                                                        interaction_sentiment=1)
 
                                 time.sleep(2)
                                 processing_stage_progress_placeholder.empty()
