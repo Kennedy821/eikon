@@ -277,8 +277,16 @@ if spatial_resolution_for_search != "London - all":
 user_search_prompt = st.text_input("Type what you'd like to search for here...")
 st.session_state.user_search_prompt = user_search_prompt
 
-number_of_results = st.selectbox("Select how many results you'd like", ["",10,20,50])
-st.session_state.number_of_results = number_of_results
+effort_selection = st.selectbox("Select how many results you'd like", ["","quick","moderate","exhaustive"])
+if effort_selection=="quick":
+    number_of_results = 10
+    st.session_state.number_of_results = number_of_results
+elif effort_selection=="moderate":
+    number_of_results = 20
+    st.session_state.number_of_results = number_of_results
+elif effort_selection=="exhaustive":
+    number_of_results = 50
+    st.session_state.number_of_results = number_of_results
 
 col_l, col_run, col_clear, col_r = st.columns([3, 1, 1, 3])
 
@@ -341,7 +349,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
                         h3_level_res = 9,
-                        number_of_results = 40,
+                        number_of_results = number_of_results * 3,
                         api_key = site_api_key,
                         lad_filter=None
                     )
@@ -349,7 +357,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
                         h3_level_res = 9,
-                        number_of_results = 40,
+                        number_of_results = number_of_results * 3,
                         api_key = site_api_key,
                         lad_filter=selected_london_borough
                     )
