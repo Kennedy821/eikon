@@ -15,7 +15,7 @@ import time
 # import folium
 import os
 import re
-
+import pydeck as pdk
 # define some functions 
 def clear_inputs() -> None:
     """Reset the text box and forget the previous results."""
@@ -25,6 +25,8 @@ def clear_inputs() -> None:
     st.session_state["number_of_results"] = ""      # resets <input>
     st.session_state["df_results"] = ""      # resets <input>
     st.session_state["init_gdf"] = ""      # resets <input>
+    st.session_state["relevant_locations_to_consider"] = ""      # resets <input>
+    st.session_state["top_k_results_gdf"] = ""      # resets <input>
 
 
 def flatten_list(nested_list):
@@ -184,7 +186,7 @@ def get_ai_evaluation_of_results_df(users_search_original,
                "results_df":results_df.to_json(),
               "api_key":user_api_key
               }
-    r = requests.post(location_evaluator_endpoint, json=payload, timeout=600)
+    r = requests.post(location_evaluator_endpoint, json=payload, timeout=1200)
     if r.ok:
         eval_binary_response = r.json()["eval_binary_response"]
         eval_rationale = r.json()["eval_rationale"]
@@ -240,21 +242,40 @@ if 'df_results' not in st.session_state:
 if 'init_gdf' not in st.session_state:
     st.session_state.init_gdf = None
 
-# if 'llm_r_model' not in st.session_state:
-#     st.session_state.llm_r_model = None
+if 'relevant_locations_to_consider' not in st.session_state:
+    st.session_state.relevant_locations_to_consider = None
 
-# if 'llm_r_tokenizer' not in st.session_state:
-#     st.session_state.llm_r_tokenizer = None
+if 'top_k_results_gdf' not in st.session_state:
+    st.session_state.top_k_results_gdf = None
 
-
+im = Image.open('slug_logo.png')
 # Set page config
 st.set_page_config(
     page_title="EIKON",
-    page_icon="🖼️",
+    page_icon=im,
     layout="wide"
 )
+# Inject CSS for banner
+st.markdown(
+    """
+    <style>
+    .banner {
+        background-image: url("https://picsum.photos/id/162/1200/200?grayscale");
+        background-size: cover;
+        background-position: center;
+        height: 200px;
+        border-radius: 12px;
+        box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
+        margin-bottom: 20px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-st.title("🖼️ EIKON - alpha app")
+# Render the banner
+st.markdown('<div class="banner"></div>', unsafe_allow_html=True)
+st.title(f"EIKON - alpha app")
 
 spatial_resolution_for_search = st.selectbox("Select the level you want to search for things", ["","London - all", "London - boroughs"])
 st.session_state.spatial_resolution_for_search = spatial_resolution_for_search
@@ -337,8 +358,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     )
 
                 relevant_locations_to_consider = h7_desc_df["location_id"].head(50)
-                
-                
+                st.session_state.relevant_locations_to_consider = relevant_locations_to_consider
                 
                 # going into stage 2
                 processing_stage_progress_placeholder.empty()
@@ -349,7 +369,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
                         h3_level_res = 9,
-                        number_of_results = number_of_results * 3,
+                        number_of_results = number_of_results * 1,
                         api_key = site_api_key,
                         lad_filter=None
                     )
@@ -357,7 +377,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
                         h3_level_res = 9,
-                        number_of_results = number_of_results * 3,
+                        number_of_results = number_of_results * 1,
                         api_key = site_api_key,
                         lad_filter=selected_london_borough
                     )
@@ -382,10 +402,11 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     search_results_gdf["contig_loc_descriptions"] = search_results_gdf["location_id"].apply(lambda x: get_contiguous_location_descriptions(origin_location=x,
                                                                                                                                                             kring_integer=1,
                                                                                                                                                             user_api_key=site_api_key))
-                          
-                top_k_results_gdf = search_results_gdf.sort_values("search_results", ascending=False).head(number_of_results*2).reset_index().drop(columns="index")
+                
+                top_k_results_gdf = search_results_gdf.sort_values("search_results", ascending=False).head(number_of_results).reset_index().drop(columns="index")
                 top_k_results_gdf = top_k_results_gdf[["location_id","description","contig_loc_descriptions","search_results","wkt_geom"]].reset_index().drop(columns="index")
-              
+                st.session_state.top_k_results_gdf = top_k_results_gdf
+
 
                 processing_stage_progress_placeholder.empty()
                 processing_stage_progress_placeholder.info("3/3 - Final checks...")
@@ -460,23 +481,70 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     gdf_wgs = gdf.to_crs(4326).copy()
                     gdf_wgs["lat"] = gdf_wgs.geometry.centroid.y
                     gdf_wgs["lon"] = gdf_wgs.geometry.centroid.x
+                    gdf_wgs["coordinates"] = gdf_wgs.apply(lambda x: [x["lon"],x["lat"]], axis=1)
                     map_element_status = st.empty()
                     try:
 
-                        fig = px.scatter_mapbox(
-                        gdf_wgs,
-                        lat="lat", lon="lon",
-                        color="search_results",
-                        color_continuous_scale=px.colors.cyclical.IceFire,
-                        # size="search_results",
-                        center={"lat": gdf.geometry.centroid.y.mean(), "lon": gdf.geometry.centroid.x.mean()},
-                        size_max=30,
-                        # color_continuous_scale="Oranges",
-                        mapbox_style="carto-positron",
-                        zoom=8, opacity=0.8, height=600
+                        # fig = px.scatter_mapbox(
+                        # gdf_wgs,
+                        # lat="lat", lon="lon",
+                        # color="search_results",
+                        # color_continuous_scale=px.colors.cyclical.IceFire,
+                        # # size="search_results",
+                        # center={"lat": gdf.geometry.centroid.y.mean(), "lon": gdf.geometry.centroid.x.mean()},
+                        # size_max=30,
+                        # # color_continuous_scale="Oranges",
+                        # mapbox_style="carto-positron",
+                        # zoom=8, opacity=0.8, height=600
+                        # )
+
+                        # st.plotly_chart(fig)
+                        gdf_wgs = gdf_wgs.reset_index()
+                        gdf_wgs["viz_results_value"] = round(gdf_wgs["search_results"] * 100,0)
+                        # alternative option would be to use pydeck for vizualisations 
+                        deck = pdk.Deck(
+                                        map_provider="mapbox",
+                                        map_style=pdk.map_styles.MAPBOX_LIGHT,
+
+                                        # map_style=pdk.map_styles.SATELLITE
+
+                                        initial_view_state = pdk.ViewState(
+                                        latitude=gdf_wgs.geometry.centroid.y.mean(),
+                                        longitude=-gdf_wgs.geometry.centroid.x.mean(),
+                                        zoom=8,
+                                        pitch=0,
+                                        bearing=0,
+                                        height=1000,width='100%'
+                                        ),
+
+                                        layers = [
+                                                pdk.Layer(
+                                                "ScatterplotLayer",
+                                                gdf_wgs,
+                                                pickable=True,
+                                                opacity=0.8,
+                                                stroked=True,
+                                                filled=True,
+                                                radius_scale=6,
+                                                radius_min_pixels=1,
+                                                radius_max_pixels=100,
+                                                line_width_min_pixels=1,
+                                                get_position="coordinates",
+                                                get_radius="viz_results_value",
+                                                get_fill_color=[255, 140, 0],
+                                                get_line_color=[0, 0, 0],
+                                            )
+                                            ],
+                                            tooltip={
+                                # "html": "<b>Hex cell:</b> {h3_index} <br/> Constituency: {Constituency} <br/>Winner: {Party}"
+                                "html": "Location: {location_id} <br/>Site is relevant: {ai_model_evaluation} <br/>Summary: {ai_model_rationale}"
+
+                            }
                         )
 
-                        st.plotly_chart(fig)
+                        
+                        st.pydeck_chart(deck)
+
                     except Exception as e:
                         map_element_status.error("There was an issue rendering your map...")
 
