@@ -11,3 +11,4 @@ pandas
 geopandas
 h3
 shapely
+pydeck
