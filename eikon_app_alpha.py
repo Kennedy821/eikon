@@ -198,7 +198,6 @@ def log_search_process_completion(prompt,
                                    user_api_key,
                                  interaction_sentiment):
 
-    # location_evaluator_endpoint = "https://slugai.pagekite.me/eikon_logging_successful_search_process"
     location_evaluator_endpoint = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["logging_completion_search_endpoint"]}'
     
     users_search = prompt
