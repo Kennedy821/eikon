@@ -11,4 +11,4 @@ pandas
 geopandas
 h3
 shapely
-pydeck
+pydeck==0.9.1
