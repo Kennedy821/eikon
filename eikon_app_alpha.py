@@ -505,8 +505,8 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                         gdf_wgs["viz_results_value"] = round(gdf_wgs["search_results"] * 100,0)
                         # alternative option would be to use pydeck for vizualisations 
                         deck = pdk.Deck(
-                                        map_provider="mapbox",
-                                        map_style=pdk.map_styles.MAPBOX_LIGHT,
+                                        map_provider="carto",
+                                        map_style=pydeck.map_styles.SATELLITE,
 
                                         # map_style=pdk.map_styles.SATELLITE
 
