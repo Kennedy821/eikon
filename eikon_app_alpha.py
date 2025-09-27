@@ -368,7 +368,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
                         h3_level_res = 9,
-                        number_of_results = number_of_results * 1,
+                        number_of_results = number_of_results * 2,
                         api_key = site_api_key,
                         lad_filter=None
                     )
@@ -376,7 +376,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
                         h3_level_res = 9,
-                        number_of_results = number_of_results * 1,
+                        number_of_results = number_of_results * 2,
                         api_key = site_api_key,
                         lad_filter=selected_london_borough
                     )
@@ -545,6 +545,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                         st.pydeck_chart(deck)
 
                     except Exception as e:
+                        st.error(e)
                         map_element_status.error("There was an issue rendering your map...")
 
 
