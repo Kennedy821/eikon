@@ -297,7 +297,7 @@ if spatial_resolution_for_search != "London - all":
 user_search_prompt = st.text_input("Type what you'd like to search for here...")
 st.session_state.user_search_prompt = user_search_prompt
 
-effort_selection = st.selectbox("Select how much effort you want to designate to your search", ["","quick","moderate","exhaustive"])
+effort_selection = st.selectbox("Select how much effort you want to designate to your search", ["","test","quick","moderate","exhaustive"])
 if effort_selection=="quick":
     number_of_results = 10
     st.session_state.number_of_results = number_of_results
@@ -307,7 +307,9 @@ elif effort_selection=="moderate":
 elif effort_selection=="exhaustive":
     number_of_results = 50
     st.session_state.number_of_results = number_of_results
-
+elif effort_selection=="test":
+    number_of_results = 3
+    st.session_state.number_of_results = number_of_results
 col_l, col_run, col_clear, col_r = st.columns([3, 1, 1, 3])
 
 # --- Run button -------------------------------------------------------------
@@ -499,6 +501,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                         # st.plotly_chart(fig)
                         gdf_wgs = gdf_wgs.reset_index()
+                        gdf_wgs["search_results"] = gdf_wgs["search_results"].astype(float)
                         gdf_wgs["viz_results_value"] = round(gdf_wgs["search_results"] * 100,0)
                         # alternative option would be to use pydeck for vizualisations 
                         deck = pdk.Deck(
