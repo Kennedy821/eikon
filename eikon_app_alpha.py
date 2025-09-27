@@ -506,7 +506,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                         # alternative option would be to use pydeck for vizualisations 
                         deck = pdk.Deck(
                                         map_provider="carto",
-                                        map_style=pdf.map_styles.SATELLITE,
+                                        map_style=pdk.map_styles.SATELLITE,
 
                                         # map_style=pdk.map_styles.SATELLITE
 
