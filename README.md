@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://github.com/Kennedy821/eikon/blob/main/slug_logo.png" alt="eikonai logo" width="600"/>
+  <img src="https://github.com/Kennedy821/eikon/blob/main/slug_logo.png" alt="eikonai logo" width="300"/>
 </p>
 
 # EikonAI
