@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://github.com/Kennedy821/eikon/blob/main/slug_logo.png" alt="eikonai logo" width="300"/>
+  <img src="https://github.com/Kennedy821/eikon/blob/main/slug_logo.png" alt="eikonai logo" width="500"/>
 </p>
 
 # EikonAI
@@ -22,7 +22,7 @@ pip install eikonai
 ```
 
 
-Python: 3.9–3.12
+Python: 3.9+
 OS: macOS, Linux, Windows
 
 # Usage 
