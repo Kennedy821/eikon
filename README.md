@@ -18,7 +18,7 @@ Works nicely in data notebooks, Streamlit apps, and backend services.
 
 ## Install (dev)
 ```bash
-pip install eikonai
+pip install eikonsai
 ```
 
 
@@ -30,7 +30,7 @@ OS: macOS, Linux, Windows
 ## Quick start
 
 ```bash
-from eikon_ai import utils, context, similarity, models
+from eikonsai import utils, context, similarity, models
 
 # set your api_key 
 import os
