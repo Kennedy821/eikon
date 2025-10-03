@@ -8,6 +8,11 @@ from PIL import Image
 from datetime import datetime
 from uuid import uuid1
 
+current_date = datetime.now()
+formatted_date = current_date.strftime("%d-%m-%Y")
+simple_date = str(current_date).split(' ')[0]
+
+
 # Functions
 
 def get_api_key_from_credentials_basic(email):
