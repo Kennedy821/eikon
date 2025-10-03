@@ -27,6 +27,10 @@ OS: macOS, Linux, Windows
 
 # Usage 
 
+Before you can get going using the eikonsai library you'll need to have registered an account [here](https://eikondatastore.streamlit.app/).
+
+Once you've successfully registered you will have access to free credits you can use to start working with the Eikon platform via the eikonsai library.
+
 ## Quick start
 
 ```bash
