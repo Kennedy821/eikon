@@ -12,3 +12,5 @@ geopandas
 h3
 shapely
 pydeck==0.9.1
+stripe
+uuid
