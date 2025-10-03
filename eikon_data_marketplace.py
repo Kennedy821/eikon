@@ -120,13 +120,13 @@ PRODUCTS = [
         "summary": "Location embeddings for UK at H3 resolution 7.",
         "filesize_mb": 520,
     },
-    {
-        "id": "london_buildings_v2",
-        "title": "London Buildings (v2)",
-        "price_gbp": 5_00,
-        "summary": "Building footprints & attributes for Greater London.",
-        "filesize_mb": 780,
-    },
+    # {
+    #     "id": "london_buildings_v2",
+    #     "title": "London Buildings (v2)",
+    #     "price_gbp": 5_00,
+    #     "summary": "Building footprints & attributes for Greater London.",
+    #     "filesize_mb": 780,
+    # },
 ]
 
 def get_product(pid): return next(p for p in PRODUCTS if p["id"] == pid)
