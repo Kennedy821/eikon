@@ -441,22 +441,30 @@ with tab_downloads:
         user_api_key = get_api_key_from_credentials_secure(email=email,password=password )
 
         entitlements_list , user_entitled_datasets = collect_user_entitlements_data(user_api_key)
+
+        
+        processed_datasets = []
+
         for idx in range(len(user_entitled_datasets)):
-            with st.container(border=1):
-                col1, col2 = st.columns([6,2])
-                with col1:
-                    st.markdown(f"**{entitlements_list[idx]}**")
-                with col2:
-                    dataset_n = convert_for_download(user_entitled_datasets[idx])
-                    
-                    # json.loads(dataset_n)
-                    # st.markdown(dataset_n)
-                    st.download_button(
-                        label="Download CSV",
-                        data=dataset_n,
-                        file_name="data.csv",
-                        mime="text/csv",
-                        icon=":material/download:",
-                    )
+            if entitlements_list[idx] not in processed_datasets:
+                with st.container(border=1):
+                    col1, col2 = st.columns([6,2])
+                    with col1:
+                        st.markdown(f"**{entitlements_list[idx]}**")
+                    with col2:
+                        dataset_n = convert_for_download(user_entitled_datasets[idx])
+                        
+                        # json.loads(dataset_n)
+                        # st.markdown(dataset_n)
+                        st.download_button(
+                            label="Download CSV",
+                            data=dataset_n,
+                            file_name="data.csv",
+                            mime="text/csv",
+                            icon=":material/download:",
+                        )
+                processed_datasets.append(entitlements_list[idx]) 
+            else:
+                pass
                         
                         
