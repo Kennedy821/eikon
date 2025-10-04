@@ -216,7 +216,18 @@ def log_search_process_completion(prompt,
     if r.ok:
         return 1
 
-
+# make a function to use in the web application side
+def detect_objects_at_location(location_id, user_api_key):
+    import requests
+    # ping the endpoint to do the initial user search
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["object_detection_endpoint"]}'
+    payload = {"location_id": location_id,
+              "api_key":user_api_key
+              }
+    r = requests.post(base_api_address, json=payload, timeout=200)
+    if r.ok:
+        objects_found = r.json()["objects"]
+        return objects_found
 
 
 
@@ -344,7 +355,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                     h7_desc_df = search_locations_based_on_prompt_first_pass(    
                         user_search_prompt_str=user_query,
-                        h3_level_res = 8,
+                        h3_level_res = 7,
                         number_of_results = 50,
                         api_key = site_api_key,
                         lad_filter=None
@@ -352,7 +363,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 elif spatial_resolution_for_search=="London - boroughs":
                     h7_desc_df = search_locations_based_on_prompt_first_pass(    
                         user_search_prompt_str=user_query,
-                        h3_level_res = 8,
+                        h3_level_res = 7,
                         number_of_results = 50,
                         api_key = site_api_key,
                         lad_filter=selected_london_borough
@@ -369,7 +380,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 if spatial_resolution_for_search=="London - all":
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
-                        h3_level_res = 9,
+                        h3_level_res = 8,
                         number_of_results = number_of_results * 2,
                         api_key = site_api_key,
                         lad_filter=None
@@ -377,7 +388,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 elif spatial_resolution_for_search=="London - boroughs":
                     search_results_df = search_locations_based_on_prompt_second_pass(
                         user_search_prompt_str=user_query,
-                        h3_level_res = 9,
+                        h3_level_res = 8,
                         number_of_results = number_of_results * 2,
                         api_key = site_api_key,
                         lad_filter=selected_london_borough
@@ -453,10 +464,10 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 top_k_results_gdf["ai_model_rationale"] = llm_rationale_container
 
                 # make sure the evaluation is a number
-                top_k_results_gdf["ai_model_evaluation"] = top_k_results_gdf["ai_model_evaluation"].astype(float)
+                top_k_results_gdf["ai_model_evaluation"] = top_k_results_gdf["ai_model_evaluation"].str.strip().astype(float)
                 
                 # st.dataframe(top_k_results_gdf)
-                if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>1:
+                if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>0:
                     top_k_results_gdf = top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1].reset_index().drop(columns="index")
 
                 else:
