@@ -246,7 +246,7 @@ def client_model_thoughts_inspection(api_key):
         if job_status==1:
             return "completed_job_found"
         else:
-            latest_ckpt = r.json()["latest_ckpt"]
+            latest_ckpt = r.json()["job_complete"]
             return f"no_completed_job_found_{latest_ckpt}"
         
 # Initialize session state variables
