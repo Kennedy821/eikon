@@ -234,6 +234,21 @@ def client_check_for_completed_job(api_key):
             latest_ckpt = r.json()["latest_ckpt"]
             return f"no_completed_job_found_{latest_ckpt}"
 
+def client_model_thoughts_inspection(api_key):
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["inspect_search_model_endpoint"]}'
+    payload = {
+        "api_key":api_key
+    }
+    r = requests.post(base_api_address, json=payload, timeout=360)
+    if r.ok:
+        job_status = r.json()["job_complete"]
+        # st.write(job_status)
+        if job_status==1:
+            return "completed_job_found"
+        else:
+            latest_ckpt = r.json()["latest_ckpt"]
+            return f"no_completed_job_found_{latest_ckpt}"
+        
 # Initialize session state variables
 if 'spatial_resolution_for_search' not in st.session_state:
     st.session_state.spatial_resolution_for_search = None
@@ -387,6 +402,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 processing_stage_progress_placeholder.success("Search completed!")
                 processing_stage_progress_placeholder.empty()
 
+                time.sleep(3)
 
                 # once the job has completed we'll collect the results
                 top_k_results_gdf = client_get_last_search_results(api_key=site_api_key)
