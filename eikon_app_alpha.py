@@ -260,7 +260,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
             
                 # make sure the evaluation is a number
-                top_k_results_gdf["ai_model_evaluation"] = top_k_results_gdf["ai_model_evaluation"].str.strip().astype(float)
+                # top_k_results_gdf["ai_model_evaluation"] = top_k_results_gdf["ai_model_evaluation"].str.strip().astype(float)
                 
                 # st.dataframe(top_k_results_gdf)
                 if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>0:
