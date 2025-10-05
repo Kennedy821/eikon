@@ -381,6 +381,9 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 # now we're going to check if the job is completed
                 exit_status = 0
                 prev_ckpt_completed = "No checkpoints yet"
+                prev_model_cot = "Not started"
+
+                model_cot_inspector = st.empty()
                 while exit_status==0:
                     job_completed = client_check_for_completed_job(api_key=site_api_key)
                     if job_completed!="completed_job_found":
@@ -394,13 +397,25 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                             time.sleep(1)
                             processing_stage_progress_placeholder.info(ckpt_message)
                             prev_ckpt_completed = ckpt_message
+
+                            if "Stage 4" in ckpt_message:
+                                current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
+                                if current_model_cot!=prev_model_cot:
+
+                                    if "1" in current_model_cot:
+                                        model_cot_inspector.success(current_model_cot)
+                                    else:
+                                        model_cot_inspector.info(current_model_cot)
+                                    prev_model_cot += current_model_cot
+                                    time.sleep(3)
                         else:
                             pass
-                        time.sleep(5)
+                        time.sleep(2)
                     else:
                         exit_status=1
                 processing_stage_progress_placeholder.success("Search completed!")
                 processing_stage_progress_placeholder.empty()
+                model_cot_inspector.empty()
 
                 time.sleep(3)
 
