@@ -415,7 +415,8 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                     else:
                                         model_cot_inspector.info(current_model_cot)
                                     prev_model_cot = current_model_cot
-                        model_cot_inspector.empty()
+                        if "Stage 4" not in ckpt_message:
+                            model_cot_inspector.empty()
 
                         if ckpt_message != prev_ckpt_completed:
                             processing_stage_progress_placeholder.empty()
