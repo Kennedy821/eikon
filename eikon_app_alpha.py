@@ -150,17 +150,21 @@ async def search_api_async(
         
     if spatial_resolution_for_search == "London - all" and selected_london_borough is None:
    
-        async with aiohttp.ClientSession() as session:
-            # Fire the request and *don’t* wait for the result
-            asyncio.create_task(session.post(base_api_address, json=payload))
-            return ("job_triggered")
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(base_api_address, json=payload) as resp:
+                resp.raise_for_status()                  # raises on 4xx/5xx
+                data = await resp.json()                 # <-- read the server reply
+                return "job_triggered" 
 
     elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
 
-        async with aiohttp.ClientSession() as session:
-            # Fire the request and *don’t* wait for the result
-            asyncio.create_task(session.post(base_api_address, json=payload))
-            return ("job_triggered")
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(base_api_address, json=payload) as resp:
+                resp.raise_for_status()                  # raises on 4xx/5xx
+                data = await resp.json()                 # <-- read the server reply
+                return "job_triggered" 
     else:
         return ("You have made an incompatible query")
 
