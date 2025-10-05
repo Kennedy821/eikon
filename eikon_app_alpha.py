@@ -240,6 +240,7 @@ def client_model_thoughts_inspection(api_key):
         "api_key": api_key
     }
     r = requests.post(base_api_address, json=payload, timeout=360)
+    st.write(r)
     if r.ok:
         # Return the actual model thoughts content
         return r.json()["latest_ckpt"]  # Assuming this is where the thoughts are stored
