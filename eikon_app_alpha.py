@@ -229,11 +229,17 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                 site_api_key = st.secrets["general"]["user_admin_api_key"]
 
-
-                top_k_results_gdf = search_api(my_search_prompt=user_search_prompt,
-                                                user_api_key=site_api_key,
-                                                effort_selection=effort_selection,
-                                                spatial_resolution_for_search=spatial_resolution_for_search)
+                if spatial_resolution_for_search == "London - all":
+                    top_k_results_gdf = search_api(my_search_prompt=user_search_prompt,
+                                                    user_api_key=site_api_key,
+                                                    effort_selection=effort_selection,
+                                                    spatial_resolution_for_search=spatial_resolution_for_search)
+                elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
+                    top_k_results_gdf = search_api(my_search_prompt=user_search_prompt,
+                                                    user_api_key=site_api_key,
+                                                    effort_selection=effort_selection,
+                                                    spatial_resolution_for_search=spatial_resolution_for_search,
+                                                    selected_london_borough=selected_london_borough)
 
 
                 # -------------------------
