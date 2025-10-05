@@ -87,22 +87,41 @@ def detect_objects_at_location(location_id, user_api_key):
 
 
 
-def search_api(my_search_prompt, user_api_key, effort_selection, spatial_resolution_for_search): 
+def search_api(
+                my_search_prompt,
+                user_api_key,
+                effort_selection,
+                spatial_resolution_for_search,
+                selected_london_borough = None
+                ): 
     
     import requests
     import pandas as pd
     # ping the endpoint to do the initial user search
     base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["search_endpoint"]}'
-    payload = {"prompt": my_search_prompt,
-              "api_key":user_api_key,
-	"effort_selection":effort_selection,
-	"spatial_resolution_for_search": spatial_resolution_for_search
-              }
-    r = requests.post(base_api_address, json=payload, timeout=1000)
-    if r.ok:
-        results_json = r.json()["successful_job_completion"]
-        results_df = pd.DataFrame.from_dict(json.loads(results_json))
-        return results_df
+    payload = {
+            "prompt": my_search_prompt,
+            "api_key":user_api_key,
+            "effort_selection":effort_selection,
+            "spatial_resolution_for_search": spatial_resolution_for_search,
+            "selected_london_borough":selected_london_borough,
+    }
+        
+    if spatial_resolution_for_search == "London - all" and selected_london_borough is None:
+   
+        r = requests.post(base_api_address, json=payload, timeout=1000)
+        if r.ok:
+            results_json = r.json()["successful_job_completion"]
+            results_df = pd.DataFrame.from_dict(json.loads(results_json))
+            return results_df
+    elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
+        r = requests.post(base_api_address, json=payload, timeout=1000)
+        if r.ok:
+            results_json = r.json()["successful_job_completion"]
+            results_df = pd.DataFrame.from_dict(json.loads(results_json))
+            return results_df
+    else:
+        return ("You have made an incompatible query")
     
 
 # Initialize session state variables
