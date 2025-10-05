@@ -307,6 +307,9 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                                     effort_selection=effort_selection,
                                                     spatial_resolution_for_search=spatial_resolution_for_search,
                                                     selected_london_borough=selected_london_borough)
+                    
+
+                time.sleep(10)
                 processing_stage_progress_placeholder = st.empty()
 
                 # now we're going to check if the job is completed
