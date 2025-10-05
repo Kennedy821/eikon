@@ -179,13 +179,16 @@ def _post_in_background(url, payload):
         print("POST failed:", e)
 
 def search_api_async(
-    base_api_address,
     my_search_prompt,
     user_api_key,
     effort_selection,
     spatial_resolution_for_search,
     selected_london_borough=None
 ):
+    import requests
+    import pandas as pd
+    # ping the endpoint to do the initial user search
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["search_endpoint_web"]}'
     payload = {
         "prompt": my_search_prompt,
         "api_key": user_api_key,
