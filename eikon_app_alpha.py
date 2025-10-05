@@ -406,8 +406,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                             if current_model_cot is not None:
                                 current_model_cot_eval = current_model_cot.split("rationale:")[0]
-                                st.write(current_model_cot_eval)
-                                current_model_cot = current_model_cot.split("rationale:")[-1]
+                                current_model_cot = current_model_cot.split("rationale:")[-1].split("rationale:")[-1]
                                 current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
 
                                 if current_model_cot != prev_model_cot:
