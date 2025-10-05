@@ -150,12 +150,13 @@ async def search_api_async(
         
     if spatial_resolution_for_search == "London - all" and selected_london_borough is None:
    
-        timeout = aiohttp.ClientTimeout(total=10)
+        timeout = aiohttp.ClientTimeout(total=20)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(base_api_address, json=payload) as resp:
                 resp.raise_for_status()                  # raises on 4xx/5xx
-                data = await resp.json()                 # <-- read the server reply
-                return "job_triggered" 
+                data = await resp.json()         
+                if data:                                 # <-- read the server reply
+                    return "job_triggered" 
 
     elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
 
@@ -163,8 +164,9 @@ async def search_api_async(
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(base_api_address, json=payload) as resp:
                 resp.raise_for_status()                  # raises on 4xx/5xx
-                data = await resp.json()                 # <-- read the server reply
-                return "job_triggered" 
+                data = await resp.json()                
+                if data:                                 # <-- read the server reply
+                    return "job_triggered"  
     else:
         return ("You have made an incompatible query")
 
