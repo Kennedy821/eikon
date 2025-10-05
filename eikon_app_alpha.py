@@ -227,6 +227,7 @@ def client_check_for_completed_job(api_key):
     r = requests.post(base_api_address, json=payload, timeout=120)
     if r.ok:
         job_status = r.json()["job_complete"]
+        st.write(job_status)
         if job_status==1:
             return "completed_job_found"
         else:
@@ -356,7 +357,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 processing_stage_progress_placeholder = st.empty()
 
                 processing_stage_progress_placeholder.info(top_k_results_gdf)
-                time.sleep(30)
+                time.sleep(7)
                 processing_stage_progress_placeholder.empty()
                 processing_stage_progress_placeholder.info("Initiating search... This may take a few minutes depending on the effort level you've selected.")
                 time.sleep(1)
@@ -364,26 +365,28 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                 # now we're going to check if the job is completed
                 exit_status = 0
-                latest_ckpt_completed = "No checkpoints yet"
+                prev_ckpt_completed = "No checkpoints yet"
                 while exit_status==0:
                     job_completed = client_check_for_completed_job(api_key=site_api_key)
                     if job_completed!="completed_job_found":
                         # get the latest checkpoint
                         latest_ckpt_completed = job_completed.split("_found_")[-1]
-                        ckpt_message = latest_ckpt_completed.split("complete")[0].strip() + ":" + latest_ckpt_completed.split("complete")[-1].replace("_"," ").strip()
+                        ckpt_message = latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[1:].lower() + " : " + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[1:].lower()
                         processing_stage_progress_placeholder.info(latest_ckpt_completed)
-                        if ckpt_message!=latest_ckpt_completed:
+                        if ckpt_message!=prev_ckpt_completed:
                             processing_stage_progress_placeholder.empty()
 
                             time.sleep(1)
                             processing_stage_progress_placeholder.info(ckpt_message)
-                            latest_ckpt_completed = ckpt_message
+                            prev_ckpt_completed = ckpt_message
                         else:
                             pass
                         time.sleep(5)
                     else:
                         exit_status=1
                 processing_stage_progress_placeholder.success("Search completed!")
+                processing_stage_progress_placeholder.empty()
+
 
                 # once the job has completed we'll collect the results
                 top_k_results_gdf = client_get_last_search_results(api_key=site_api_key)
