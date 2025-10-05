@@ -387,7 +387,30 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                         latest_ckpt_completed = job_completed.split("_found_")[-1]
                         ckpt_message = latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[1:].lower() + " : " + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[1:].lower()
                         processing_stage_progress_placeholder.info(ckpt_message)
-                        if ckpt_message!=prev_ckpt_completed:
+
+                        # Poll model thoughts every loop while we're in Stage 4 (not only when the checkpoint text changed)
+                        if "Stage 4" in ckpt_message:
+                            if "Not started" in prev_model_cot:
+                                model_cot_inspector.empty()
+                                model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
+
+                            # Poll the model thoughts endpoint every iteration
+                            current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
+
+                            if current_model_cot is not None and "_found_" in current_model_cot and "rationale:" in current_model_cot:
+                                current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
+                                current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
+                                current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
+
+                                if current_model_cot != prev_model_cot:
+                                    model_cot_inspector.empty()
+                                    if "1" in current_model_cot_eval:
+                                        model_cot_inspector.success(current_model_cot)
+                                    else:
+                                        model_cot_inspector.info(current_model_cot)
+                                    prev_model_cot = current_model_cot
+
+                        if ckpt_message != prev_ckpt_completed:
                             processing_stage_progress_placeholder.empty()
 
                             time.sleep(1)
@@ -416,9 +439,6 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                             model_cot_inspector.info(current_model_cot)
                                             
                                         prev_model_cot = current_model_cot
-                            #     else:
-                            #         pass
-                            # else:
                         else:
                             pass
                         time.sleep(10)
