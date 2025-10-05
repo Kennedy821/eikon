@@ -317,7 +317,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 processing_stage_progress_placeholder = st.empty()
 
                 processing_stage_progress_placeholder.info(top_k_results_gdf)
-                time.sleep(10)
+                time.sleep(30)
                 processing_stage_progress_placeholder.empty()
                 processing_stage_progress_placeholder.info("Initiating search... This may take a few minutes depending on the effort level you've selected.")
                 time.sleep(1)
