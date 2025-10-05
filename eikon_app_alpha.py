@@ -227,7 +227,7 @@ def client_check_for_completed_job(api_key):
     r = requests.post(base_api_address, json=payload, timeout=120)
     if r.ok:
         job_status = r.json()["job_complete"]
-        st.write(job_status)
+        # st.write(job_status)
         if job_status==1:
             return "completed_job_found"
         else:
@@ -372,7 +372,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                         # get the latest checkpoint
                         latest_ckpt_completed = job_completed.split("_found_")[-1]
                         ckpt_message = latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[1:].lower() + " : " + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[1:].lower()
-                        processing_stage_progress_placeholder.info(latest_ckpt_completed)
+                        processing_stage_progress_placeholder.info(ckpt_message)
                         if ckpt_message!=prev_ckpt_completed:
                             processing_stage_progress_placeholder.empty()
 
