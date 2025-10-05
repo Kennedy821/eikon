@@ -398,7 +398,6 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                 model_cot_inspector.empty()
                                 model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
                                 time.sleep(1)
-                                model_cot_inspector.empty()
 
 
                             # Poll the model thoughts endpoint every iteration
@@ -416,6 +415,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                     else:
                                         model_cot_inspector.info(current_model_cot)
                                     prev_model_cot = current_model_cot
+                        model_cot_inspector.empty()
 
                         if ckpt_message != prev_ckpt_completed:
                             processing_stage_progress_placeholder.empty()
