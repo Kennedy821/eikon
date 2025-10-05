@@ -409,7 +409,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                 if current_model_cot is not None:
                                     current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
                                     current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
-                                    current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.split("_found_")[-1].replace("_"," ").strip()[1:].lower()
+                                    current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
                                     if current_model_cot!=prev_model_cot:
 
                                         if "1" in current_model_cot_eval:
