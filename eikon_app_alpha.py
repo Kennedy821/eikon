@@ -407,6 +407,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                  
                                 current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
                                 if current_model_cot is not None:
+                                    current_model_cot = current_model_cot.split("_found_")[-1].replace("_"," ").strip()[:1].upper() + current_model_cot.split("_found_")[-1].replace("_"," ").strip()[1:].lower()
                                     if current_model_cot!=prev_model_cot:
 
                                         if "1" in current_model_cot:
