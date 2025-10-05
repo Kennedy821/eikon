@@ -404,7 +404,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                             # Poll the model thoughts endpoint every iteration
                             current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
 
-                            if current_model_cot is not None and "rationale:" in current_model_cot:
+                            if current_model_cot is not None:
                                 current_model_cot_eval = current_model_cot.split("rationale:")[0]
                                 st.write(current_model_cot_eval)
                                 current_model_cot = current_model_cot.split("rationale:")[-1]
