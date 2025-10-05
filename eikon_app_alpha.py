@@ -397,12 +397,16 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                             if "Not started" in prev_model_cot:
                                 model_cot_inspector.empty()
                                 model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
+                                time.sleep(1)
+                                model_cot_inspector.empty()
+
 
                             # Poll the model thoughts endpoint every iteration
                             current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
 
                             if current_model_cot is not None and "rationale:" in current_model_cot:
                                 current_model_cot_eval = current_model_cot.split("rationale:")[0]
+                                st.write(current_model_cot_eval)
                                 current_model_cot = current_model_cot.split("rationale:")[-1]
                                 current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
 
