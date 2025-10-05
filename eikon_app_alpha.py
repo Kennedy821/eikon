@@ -360,7 +360,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 time.sleep(7)
                 processing_stage_progress_placeholder.empty()
                 processing_stage_progress_placeholder.info("Initiating search... This may take a few minutes depending on the effort level you've selected.")
-                time.sleep(1)
+                time.sleep(7)
                 processing_stage_progress_placeholder.empty()
 
                 # now we're going to check if the job is completed
