@@ -87,7 +87,8 @@ def detect_objects_at_location(location_id, user_api_key):
 
 
 
-def search_api(my_search_prompt, user_api_key, effort_selection, spatial_resolution_for_search):
+def search_api(my_search_prompt, user_api_key, effort_selection, spatial_resolution_for_search): 
+    
     import requests
     import pandas as pd
     # ping the endpoint to do the initial user search
@@ -211,15 +212,15 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
 
                 top_k_results_gdf = search_api(my_search_prompt=user_search_prompt,
-                           user_api_key=site_api_key,
-                           effort_selection=effort_selection,
-                           spatial_resolution_for_search=spatial_resolution_for_search)
+                                                user_api_key=site_api_key,
+                                                effort_selection=effort_selection,
+                                                spatial_resolution_for_search=spatial_resolution_for_search)
 
 
                 # -------------------------
                 # a stage will be added here for our custom models to consider all the locations
                 # -------------------------
-                # processing_stage_progress_placeholder = st.empty()
+                processing_stage_progress_placeholder = st.empty()
                 # processing_stage_progress_placeholder.info("1/3 - Initial screening...")
 
                 # processing_stage_progress_placeholder.empty()
@@ -255,7 +256,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 processing_stage_progress_placeholder.success("Here are your results...")
 
 
-                # gdf
+                col1, col2 = st.columns(2) 
 
                 with col1:
 
