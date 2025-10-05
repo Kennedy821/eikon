@@ -399,15 +399,21 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                             prev_ckpt_completed = ckpt_message
 
                             if "Stage 4" in ckpt_message:
+                                model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
+                                # time.sleep(5)
+                                 
                                 current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
-                                if current_model_cot!=prev_model_cot:
+                                if current_model_cot is not None:
+                                    if current_model_cot!=prev_model_cot:
 
-                                    if "1" in current_model_cot:
-                                        model_cot_inspector.success(current_model_cot)
-                                    else:
-                                        model_cot_inspector.info(current_model_cot)
-                                    prev_model_cot += current_model_cot
-                                    time.sleep(3)
+                                        if "1" in current_model_cot:
+                                            model_cot_inspector.success(current_model_cot)
+                                        else:
+                                            model_cot_inspector.info(current_model_cot)
+                                        prev_model_cot += current_model_cot
+                                        time.sleep(3)
+                                else:
+                                    pass
                         else:
                             pass
                         time.sleep(2)
