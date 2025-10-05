@@ -153,7 +153,6 @@ async def search_api_async(
         async with aiohttp.ClientSession() as session:
             # Fire the request and *don’t* wait for the result
             asyncio.create_task(session.post(base_api_address, json=payload))
-            print("🚀 Request sent — not waiting for response.")
             return ("job_triggered")
 
     elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
@@ -308,9 +307,17 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                                     spatial_resolution_for_search=spatial_resolution_for_search,
                                                     selected_london_borough=selected_london_borough)
                     
+                
+                    
 
-                time.sleep(10)
                 processing_stage_progress_placeholder = st.empty()
+
+                processing_stage_progress_placeholder.info(top_k_results_gdf)
+                time.sleep(10)
+                processing_stage_progress_placeholder.empty()
+                processing_stage_progress_placeholder.info("Initiating search... This may take a few minutes depending on the effort level you've selected.")
+                time.sleep(1)
+                processing_stage_progress_placeholder.empty()
 
                 # now we're going to check if the job is completed
                 exit_status = 0
@@ -321,7 +328,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                         latest_ckpt_completed = job_completed.split("_found_")[-1]
                         processing_stage_progress_placeholder.info(latest_ckpt_completed)
                         time.sleep(5)
-                        processing_stage_progress_placeholder = st.empty()
+                        processing_stage_progress_placeholder.empty()
 
                     else:
                         exit_status=1
