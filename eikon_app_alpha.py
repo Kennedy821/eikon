@@ -240,14 +240,14 @@ def client_model_thoughts_inspection(api_key):
         "api_key":api_key
     }
     r = requests.post(base_api_address, json=payload, timeout=360)
-    st.write(r)
+    print(r)
     if r.ok:
         job_status = r.json()["job_complete"]
         st.write(job_status)
         if job_status==1:
             return "completed_job_found"
         else:
-            latest_ckpt = r.json()["job_complete"]
+            latest_ckpt = r.json()["latest_ckpt"]
             return f"no_completed_job_found_{latest_ckpt}"
         
 # Initialize session state variables
