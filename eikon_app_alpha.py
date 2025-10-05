@@ -16,6 +16,8 @@ import time
 import os
 import re
 import pydeck as pdk
+import asyncio
+import aiohttp
 # define some functions 
 def clear_inputs() -> None:
     """Reset the text box and forget the previous results."""
