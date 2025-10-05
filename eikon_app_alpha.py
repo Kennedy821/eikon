@@ -100,7 +100,7 @@ def search_api(my_search_prompt, user_api_key, effort_selection, spatial_resolut
     r = requests.post(base_api_address, json=payload, timeout=1000)
     if r.ok:
         results_json = r.json()["successful_job_completion"]
-        results_df = pd.DataFrame.from_dict(results_json)
+        results_df = pd.DataFrame.from_dict(json.loads(results_json))
         return results_df
     
 
