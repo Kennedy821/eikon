@@ -237,18 +237,13 @@ def client_check_for_completed_job(api_key):
 def client_model_thoughts_inspection(api_key):
     base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["inspect_search_model_endpoint"]}'
     payload = {
-        "api_key":api_key
+        "api_key": api_key
     }
     r = requests.post(base_api_address, json=payload, timeout=360)
-    print(r)
     if r.ok:
-        job_status = r.json()["job_complete"]
-        st.write(job_status)
-        if job_status==1:
-            return "completed_job_found"
-        else:
-            latest_ckpt = r.json()["latest_ckpt"]
-            return f"no_completed_job_found_{latest_ckpt}"
+        # Return the actual model thoughts content
+        return r.json()["latest_ckpt"]  # Assuming this is where the thoughts are stored
+    return None
         
 # Initialize session state variables
 if 'spatial_resolution_for_search' not in st.session_state:
@@ -401,25 +396,26 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                             if "Stage 4" in ckpt_message:
                                 if "Not started" in prev_model_cot:
-                                    model_cot_inspector.empty()  # Clear previous content
+                                    model_cot_inspector.empty()
                                     model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
-                                 
+                                
+                                time.sleep(5)  # Add delay between inspection calls
                                 current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
-                                if current_model_cot is not None:
+                                
+                                if current_model_cot is not None and "_found_" in current_model_cot and "rationale:" in current_model_cot:
                                     current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
                                     current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
                                     current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
                                     
                                     if current_model_cot != prev_model_cot:
-                                        model_cot_inspector.empty()  # Clear previous content before updating
+                                        model_cot_inspector.empty()
                                         
                                         if "1" in current_model_cot_eval:
                                             model_cot_inspector.success(current_model_cot)
-                                        else:
+                                        else: 
                                             model_cot_inspector.info(current_model_cot)
                                             
                                         prev_model_cot = current_model_cot
-                                        # time.sleep(3)
                             #     else:
                             #         pass
                             # else:
