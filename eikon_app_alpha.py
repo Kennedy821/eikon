@@ -240,11 +240,12 @@ def client_model_thoughts_inspection(api_key):
         "api_key": api_key
     }
     r = requests.post(base_api_address, json=payload, timeout=360)
-    st.write(r)
+    # st.write(r)
     if r.ok:
         # Return the actual model thoughts content
-        st.write(r.json())
-        return r.json()["latest_ckpt"]  # Assuming this is where the thoughts are stored
+        # st.write(r.json())
+        latest_ckpt = r.json()["latest_ckpt"]
+        return latest_ckpt
     else:
         return None
         
@@ -400,9 +401,9 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                             # Poll the model thoughts endpoint every iteration
                             current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
 
-                            if current_model_cot is not None and "_found_" in current_model_cot and "rationale:" in current_model_cot:
-                                current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
-                                current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
+                            if current_model_cot is not None and "rationale:" in current_model_cot:
+                                current_model_cot_eval = current_model_cot.split("rationale:")[0]
+                                current_model_cot = current_model_cot.split("rationale:")[-1]
                                 current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
 
                                 if current_model_cot != prev_model_cot:
