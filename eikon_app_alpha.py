@@ -364,15 +364,23 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
 
                 # now we're going to check if the job is completed
                 exit_status = 0
+                latest_ckpt_completed = "No checkpoints yet"
                 while exit_status==0:
                     job_completed = client_check_for_completed_job(api_key=site_api_key)
                     if job_completed!="completed_job_found":
                         # get the latest checkpoint
                         latest_ckpt_completed = job_completed.split("_found_")[-1]
+                        ckpt_message = latest_ckpt_completed.split("complete")[0].strip() + ":" + latest_ckpt_completed.split("complete")[-1].replace("_"," ").strip()
                         processing_stage_progress_placeholder.info(latest_ckpt_completed)
-                        time.sleep(5)
-                        processing_stage_progress_placeholder.empty()
+                        if ckpt_message!=latest_ckpt_completed:
+                            processing_stage_progress_placeholder.empty()
 
+                            time.sleep(1)
+                            processing_stage_progress_placeholder.info(ckpt_message)
+                            latest_ckpt_completed = ckpt_message
+                        else:
+                            pass
+                        time.sleep(5)
                     else:
                         exit_status=1
                 processing_stage_progress_placeholder.success("Search completed!")
