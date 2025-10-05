@@ -18,6 +18,7 @@ import re
 import pydeck as pdk
 import asyncio
 import aiohttp
+import threading
 # define some functions 
 def clear_inputs() -> None:
     """Reset the text box and forget the previous results."""
@@ -167,6 +168,41 @@ async def search_api_async(
         return "job_triggered"  
     else:
         return ("You have made an incompatible query")
+
+import threading
+import requests
+
+def _post_in_background(url, payload):
+    try:
+        requests.post(url, json=payload, timeout=5)  # short timeout to avoid blocking
+    except Exception as e:
+        print("POST failed:", e)
+
+def search_api_async(
+    base_api_address,
+    my_search_prompt,
+    user_api_key,
+    effort_selection,
+    spatial_resolution_for_search,
+    selected_london_borough=None
+):
+    payload = {
+        "prompt": my_search_prompt,
+        "api_key": user_api_key,
+        "effort_selection": effort_selection,
+        "spatial_resolution_for_search": spatial_resolution_for_search,
+        "selected_london_borough": selected_london_borough,
+    }
+
+    # Launch the POST in a separate daemon thread — does not block
+    threading.Thread(
+        target=_post_in_background,
+        args=(base_api_address, payload),
+        daemon=True
+    ).start()
+
+    # Return immediately without waiting for the POST
+    return "job_triggered"
 
 # make client side function to get latest results 
 def client_get_last_search_results(api_key):
