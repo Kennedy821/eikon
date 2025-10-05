@@ -424,7 +424,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                 model_cot_inspector.empty()
                         else:
                             pass
-                        time.sleep(2)
+                        time.sleep(10)
                     else:
                         exit_status=1
                 processing_stage_progress_placeholder.success("Search completed!")
