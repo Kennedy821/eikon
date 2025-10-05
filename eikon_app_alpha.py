@@ -407,15 +407,17 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                  
                                 current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
                                 if current_model_cot is not None:
-                                    current_model_cot = current_model_cot.split("_found_")[-1].replace("_"," ").strip()[:1].upper() + current_model_cot.split("_found_")[-1].replace("_"," ").strip()[1:].lower()
+                                    current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
+                                    current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
+                                    current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.split("_found_")[-1].replace("_"," ").strip()[1:].lower()
                                     if current_model_cot!=prev_model_cot:
 
-                                        if "1" in current_model_cot:
+                                        if "1" in current_model_cot_eval:
                                             model_cot_inspector.success(current_model_cot)
                                         else:
                                             model_cot_inspector.info(current_model_cot)
                                         prev_model_cot = current_model_cot
-                                        time.sleep(3)
+                                        # time.sleep(3)
                                 else:
                                     pass
                             else:
