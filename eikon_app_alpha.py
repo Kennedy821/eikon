@@ -242,7 +242,7 @@ def client_model_thoughts_inspection(api_key):
     r = requests.post(base_api_address, json=payload, timeout=360)
     if r.ok:
         job_status = r.json()["job_complete"]
-        # st.write(job_status)
+        st.write(job_status)
         if job_status==1:
             return "completed_job_found"
         else:
