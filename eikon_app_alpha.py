@@ -122,7 +122,72 @@ def search_api(
             return results_df
     else:
         return ("You have made an incompatible query")
+
+import asyncio
+import aiohttp
+
+async def search_api_async(
+                my_search_prompt,
+                user_api_key,
+                effort_selection,
+                spatial_resolution_for_search,
+                selected_london_borough = None
+                ): 
     
+    import requests
+    import pandas as pd
+    # ping the endpoint to do the initial user search
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["search_endpoint_web"]}'
+    payload = {
+            "prompt": my_search_prompt,
+            "api_key":user_api_key,
+            "effort_selection":effort_selection,
+            "spatial_resolution_for_search": spatial_resolution_for_search,
+            "selected_london_borough":selected_london_borough,
+    }
+        
+    if spatial_resolution_for_search == "London - all" and selected_london_borough is None:
+   
+        async with aiohttp.ClientSession() as session:
+            # Fire the request and *don’t* wait for the result
+            asyncio.create_task(session.post(base_api_address, json=payload))
+            print("🚀 Request sent — not waiting for response.")
+            return ("job_triggered")
+
+    elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
+
+        async with aiohttp.ClientSession() as session:
+            # Fire the request and *don’t* wait for the result
+            asyncio.create_task(session.post(base_api_address, json=payload))
+            return ("job_triggered")
+    else:
+        return ("You have made an incompatible query")
+
+# make client side function to get latest results 
+def client_get_last_search_results(api_key):
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["get_latest_results_endpoint"]}'
+    payload = {
+        "api_key":api_key
+    }
+    r = requests.post(base_api_address, json=payload, timeout=120)
+    if r.ok:
+        latest_results_json = r.json()["latest_search_results"]
+        results_df = pd.DataFrame.from_dict(json.loads(latest_results_json))
+        return results_df
+    
+def client_check_for_completed_job(api_key):
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["check_job_completion_endpoint"]}'
+    payload = {
+        "api_key":api_key
+    }
+    r = requests.post(base_api_address, json=payload, timeout=120)
+    if r.ok:
+        job_status = r.json()["job_complete"]
+        if job_status==1:
+            return "completed_job_found"
+        else:
+            latest_ckpt = r.json()["latest_ckpt"]
+            return f"no_completed_job_found_{latest_ckpt}"
 
 # Initialize session state variables
 if 'spatial_resolution_for_search' not in st.session_state:
@@ -230,16 +295,35 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 site_api_key = st.secrets["general"]["user_admin_api_key"]
 
                 if spatial_resolution_for_search == "London - all":
-                    top_k_results_gdf = search_api(my_search_prompt=user_search_prompt,
+                    top_k_results_gdf = search_api_async(my_search_prompt=user_search_prompt,
                                                     user_api_key=site_api_key,
                                                     effort_selection=effort_selection,
                                                     spatial_resolution_for_search=spatial_resolution_for_search)
                 elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
-                    top_k_results_gdf = search_api(my_search_prompt=user_search_prompt,
+                    top_k_results_gdf = search_api_async(my_search_prompt=user_search_prompt,
                                                     user_api_key=site_api_key,
                                                     effort_selection=effort_selection,
                                                     spatial_resolution_for_search=spatial_resolution_for_search,
                                                     selected_london_borough=selected_london_borough)
+                processing_stage_progress_placeholder = st.empty()
+
+                # now we're going to check if the job is completed
+                exit_status = 0
+                while exit_status==0:
+                    job_completed = client_check_for_completed_job(api_key=site_api_key)
+                    if job_completed!="completed_job_found":
+                        # get the latest checkpoint
+                        latest_ckpt_completed = job_completed.split("_found_")[-1]
+                        processing_stage_progress_placeholder.info(latest_ckpt_completed)
+                        time.sleep(5)
+                        processing_stage_progress_placeholder = st.empty()
+
+                    else:
+                        exit_status=1
+                processing_stage_progress_placeholder.success("Search completed!")
+
+                # once the job has completed we'll collect the results
+                top_k_results_gdf = client_get_last_search_results(api_key=site_api_key)
 
 
                 # -------------------------
