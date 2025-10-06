@@ -404,8 +404,8 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                             current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
 
                             if current_model_cot is not None:
-                                current_model_cot_eval = current_model_cot.split("rationale:")[0]
-                                current_model_cot = current_model_cot.split("rationale:")[-1].split("rationale:")[-1]
+                                current_model_cot_eval = current_model_cot.lower().split("rationale:")[0]
+                                current_model_cot = current_model_cot.lower().split("rationale:")[-1]
                                 current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
 
                                 if current_model_cot != prev_model_cot:
@@ -416,7 +416,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                         model_cot_inspector.info(current_model_cot)
                                     prev_model_cot = current_model_cot
                         if "Stage 4" not in ckpt_message:
-                            model_cot_inspector.empty()
+                            model_cot_inspector.empty() 
 
                         if ckpt_message != prev_ckpt_completed:
                             processing_stage_progress_placeholder.empty()
