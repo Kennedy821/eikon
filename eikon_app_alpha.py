@@ -473,7 +473,6 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 # processing_stage_progress_placeholder.empty()
                 # processing_stage_progress_placeholder.info("3/3 - Final checks...")
                 
-                progress_bar = st.progress(0, text=":grey[Evaluating locations!]")
 
                 progress_placeholder = st.empty()
 
