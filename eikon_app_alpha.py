@@ -227,6 +227,7 @@ def client_get_last_search_results_many(api_key, num_searches=5):
         "num_searches":num_searches
     }
     r = requests.post(base_api_address, json=payload, timeout=120)
+    # st.write(r)
     if r.ok:
         latest_results_json = r.json()["latest_search_results"]
         list_of_results_json = latest_results_json.split("|")
@@ -671,35 +672,38 @@ with tab2:
     site_api_key = st.secrets["general"]["user_admin_api_key"]
 
     # we will call the endpoint to get previous searches
-    previous_searches_df = client_get_last_search_results_many(api_key=site_api_key, num_searches=10)
+    previous_searches_df = client_get_last_search_results_many(api_key=site_api_key, num_searches=3)
     # figure out how many unique searches there are
     unique_search_instances = previous_searches_df["search_instance_id"].unique().tolist()
 
     # now we're going to make a container with each one
     for search_result in unique_search_instances:
         with st.expander(f"Previous search: {search_result}"):
-            search_instance_df = previous_searches_df[previous_searches_df["search_instance_id"]==search_result].reset_index().drop(columns="index")
-            st.write(f"Search prompt: {search_instance_df['user_search_prompt'].values[0]}")
-            st.write(f"Spatial resolution: {search_instance_df['spatial_resolution_for_search'].values[0]}")
-            st.write(f"Selected borough (if applicable): {search_instance_df['selected_london_borough'].values[0]}")
-            st.write(f"Effort level: {search_instance_df['effort_selection'].values[0]}")
-            st.write(f"Number of results: {len(search_instance_df)}")
-            for location_idx in range(len(search_instance_df)):
-                with st.expander(f"Location: {location_idx+1}"):
-                    if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>0:
-                        top_k_results_gdf = top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1].reset_index().drop(columns="index")
+            progress_placeholder = st.empty()
 
-                    else:
-                        progress_placeholder.error("It looks like there weren't any suitable locations found that match what you're looking for.")
+            
+            top_k_results_gdf = previous_searches_df[previous_searches_df["search_instance_id"]==search_result].reset_index().drop(columns="index")
+            if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>0:
+                top_k_results_gdf = top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1].reset_index().drop(columns="index")
+
+            else:
+                progress_placeholder.error("It looks like there weren't any suitable locations found that match what you're looking for.")
 
 
-                    if st.session_state.init_gdf is None:
-                        top_k_results_gdf["geometry"] = top_k_results_gdf["wkt_geom"].apply(wkt.loads)
-                        gdf = gp.GeoDataFrame(top_k_results_gdf, geometry="geometry", crs=27700).to_crs(4326).set_index("location_id")
-                    else:
-                        gdf = st.session_state.init_gdf
+            if st.session_state.init_gdf is None:
+                top_k_results_gdf["geometry"] = top_k_results_gdf["wkt_geom"].apply(wkt.loads)
+                gdf = gp.GeoDataFrame(top_k_results_gdf, geometry="geometry", crs=27700).to_crs(4326).set_index("location_id")
+            else:
+                gdf = st.session_state.init_gdf
 
-                    gdf = gdf.reset_index()
+            gdf = gdf.reset_index()           
+            
+            
+            
+            for location_idx in range(len(top_k_results_gdf)):
+                with st.container(border=True):
+                    st.write(f"Location: {location_idx+1}")
+
                     viz_col1, viz_col2 = st.columns([3,8])
 
                     location_lat_coord = gdf[gdf.index==location_idx].geometry.centroid.y.mean()
