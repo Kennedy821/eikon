@@ -16,6 +16,9 @@ import time
 import os
 import re
 import pydeck as pdk
+import asyncio
+import aiohttp
+import threading
 # define some functions 
 def clear_inputs() -> None:
     """Reset the text box and forget the previous results."""
@@ -48,150 +51,6 @@ def flatten_list(nested_list):
     return flat_list
 
 
-# make a function to use in the web application side
-def process_users_initial_prompt(user_prompt_str, user_api_key):
-    import requests
-    # ping the endpoint to do the initial user search
-    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["process_initial_user_prompt_endpoint"]}'
-    payload = {"prompt": user_prompt_str,
-              "api_key":user_api_key
-              }
-    r = requests.post(base_api_address, json=payload, timeout=200)
-    if r.ok:
-        processed_user_prompt = r.json()["processed_user_prompt"]
-        return processed_user_prompt
-
-# creating a new function to extract results from API
-def search_locations_based_on_prompt_first_pass(user_search_prompt_str, h3_level_res,number_of_results, api_key,lad_filter=None ):
-    search_api_endpoint = st.secrets["general"]["api_url_1"]
-    site_api_key = st.secrets["general"]["user_admin_api_key"]
-    payload = {"prompt": user_search_prompt_str,
-        "h3_level_integer":h3_level_res,
-        "top_k": number_of_results,
-        "api_key": api_key,
-        "lad_filter":lad_filter}
-    r = requests.post(search_api_endpoint, json=payload, timeout=600)
-    if r.ok:
-        json_obj = json.loads(r.json()["query_search_results"])
-
-        # st.write(json_obj)
-        # unpack json response
-        location_ids_container = []
-        description_container = []
-        search_results_container = []
-        geometry_container = []
-
-        counter = 0
-        for i in json_obj:
-            if counter ==0:
-                for x in range(len(json_obj[i])):
-                    # location_ids = pd.json_normalize(json_obj[i])
-                    location_ids_container.append(json_obj[i][str(x)])
-            elif counter ==1:
-                for x in range(len(json_obj[i])):
-                    description_container.append(json_obj[i][str(x)])     
-            elif counter ==2:
-                for x in range(len(json_obj[i])):
-
-                    search_results_container.append(json_obj[i][str(x)])   
-            elif counter ==3:
-                for x in range(len(json_obj[i])):
-
-                    geometry_container.append(json_obj[i][str(x)])   
-            counter += 1
-
-        search_query_results_df = pd.DataFrame([location_ids_container,
-                                                description_container,
-                                                search_results_container,
-                                                geometry_container
-                                                ]).T
-        search_query_results_df.columns = ["location_id","description","search_results","wkt_geom"]
-        search_query_results_df["geometry"] = search_query_results_df["wkt_geom"].apply(wkt.loads)
-        return search_query_results_df
-
-# creating a new function to extract results from API
-def search_locations_based_on_prompt_second_pass(user_search_prompt_str, h3_level_res,number_of_results, api_key,lad_filter=None ):
-    search_api_endpoint = st.secrets["general"]["api_url_1"]
-    site_api_key = st.secrets["general"]["user_admin_api_key"]
-    payload = {"prompt": user_search_prompt_str,
-        "h3_level_integer":h3_level_res,
-        "top_k": number_of_results,
-        "api_key": api_key,
-        "lad_filter":lad_filter}
-    r = requests.post(search_api_endpoint, json=payload, timeout=600)
-    if r.ok:
-        json_obj = json.loads(r.json()["query_search_results"])
-        # st.write(json_obj)
-
-        # unpack json response
-        location_ids_container = []
-        description_container = []
-        search_results_container = []
-        geometry_container = []
-
-        counter = 0
-        for i in json_obj:
-            if counter ==0:
-                for x in range(len(json_obj[i])):
-                    # location_ids = pd.json_normalize(json_obj[i])
-                    location_ids_container.append(json_obj[i][str(x)])
-            elif counter ==1:
-                for x in range(len(json_obj[i])):
-                    description_container.append(json_obj[i][str(x)])     
-            elif counter ==2:
-                for x in range(len(json_obj[i])):
-                    search_results_container.append(json_obj[i][str(x)])   
-            elif counter ==3:
-                for x in range(len(json_obj[i])):
-                    geometry_container.append(json_obj[i][str(x)])   
-            counter += 1
-
-        search_query_results_df = pd.DataFrame([location_ids_container,
-                                                description_container,
-                                                search_results_container,
-                                                geometry_container
-                                                ]).T
-        search_query_results_df.columns = ["location_id","description","search_results","wkt_geom"]
-        search_query_results_df["geometry"] = search_query_results_df["wkt_geom"].apply(wkt.loads)
-
-        return search_query_results_df
-
-# make a function to use in the web application side for the contiguous descriptions endpoint
-def get_contiguous_location_descriptions(origin_location,kring_integer, user_api_key):
-    import requests
-    # ping the endpoint to do the initial user search
-    contiguous_desc_api_endpoint = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["contiguous_location_description_endpoint"]}'
-    
-    payload = {"origin_location": origin_location,
-               "kring_integer":kring_integer,
-              "api_key":user_api_key
-              }
-    r = requests.post(contiguous_desc_api_endpoint, json=payload, timeout=600)
-    if r.ok:
-        processed_location_contiguous_description = r.json()["contiguous_location_description"]
-        return processed_location_contiguous_description
-
-
-def get_ai_evaluation_of_results_df(users_search_original,
-                                   results_df,
-                                   user_api_key):
-
-    location_evaluator_endpoint = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["location_evaluator_endpoint"]}'
-    
-    users_search = users_search_original
-    results_df = results_df 
-    user_api_key = user_api_key
-    
-    payload = {"user_search": users_search,
-               "results_df":results_df.to_json(),
-              "api_key":user_api_key
-              }
-    r = requests.post(location_evaluator_endpoint, json=payload, timeout=1200)
-    if r.ok:
-        eval_binary_response = r.json()["eval_binary_response"]
-        eval_rationale = r.json()["eval_rationale"]
-        return eval_binary_response, eval_rationale
-
 def log_search_process_completion(prompt,
                                    completion,
                                    location_description,
@@ -216,12 +75,180 @@ def log_search_process_completion(prompt,
     if r.ok:
         return 1
 
+# make a function to use in the web application side
+def detect_objects_at_location(location_id, user_api_key):
+    import requests
+    # ping the endpoint to do the initial user search
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["object_detection_endpoint"]}'
+    payload = {"location_id": location_id,
+              "api_key":user_api_key
+              }
+    r = requests.post(base_api_address, json=payload, timeout=200)
+    if r.ok:
+        objects_found = r.json()["objects"]
+        return objects_found
 
 
 
+def search_api(
+                my_search_prompt,
+                user_api_key,
+                effort_selection,
+                spatial_resolution_for_search,
+                selected_london_borough = None
+                ): 
+    
+    import requests
+    import pandas as pd
+    # ping the endpoint to do the initial user search
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["search_endpoint"]}'
+    payload = {
+            "prompt": my_search_prompt,
+            "api_key":user_api_key,
+            "effort_selection":effort_selection,
+            "spatial_resolution_for_search": spatial_resolution_for_search,
+            "selected_london_borough":selected_london_borough,
+    }
+        
+    if spatial_resolution_for_search == "London - all" and selected_london_borough is None:
+   
+        r = requests.post(base_api_address, json=payload, timeout=1000)
+        if r.ok:
+            results_json = r.json()["successful_job_completion"]
+            results_df = pd.DataFrame.from_dict(json.loads(results_json))
+            return results_df
+    elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
+        r = requests.post(base_api_address, json=payload, timeout=1000)
+        if r.ok:
+            results_json = r.json()["successful_job_completion"]
+            results_df = pd.DataFrame.from_dict(json.loads(results_json))
+            return results_df
+    else:
+        return ("You have made an incompatible query")
 
+import asyncio
+import aiohttp
 
+async def search_api_async(
+                my_search_prompt,
+                user_api_key,
+                effort_selection,
+                spatial_resolution_for_search,
+                selected_london_borough = None
+                ): 
+    
+    import requests
+    import pandas as pd
+    # ping the endpoint to do the initial user search
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["search_endpoint_web"]}'
+    payload = {
+            "prompt": my_search_prompt,
+            "api_key":user_api_key,
+            "effort_selection":effort_selection,
+            "spatial_resolution_for_search": spatial_resolution_for_search,
+            "selected_london_borough":selected_london_borough,
+    }
+        
+    if spatial_resolution_for_search == "London - all" and selected_london_borough is None:
+   
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(base_api_address, json=payload) as resp:
+                resp.raise_for_status()                  # raises on 4xx/5xx
+                data = await resp.json()         
+        return "job_triggered" 
 
+    elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
+
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(base_api_address, json=payload) as resp:
+                resp.raise_for_status()                  # raises on 4xx/5xx
+                data = await resp.json()                
+        return "job_triggered"  
+    else:
+        return ("You have made an incompatible query")
+
+import threading
+import requests
+
+def _post_in_background(url, payload):
+    try:
+        requests.post(url, json=payload, timeout=5)  # short timeout to avoid blocking
+    except Exception as e:
+        print("POST failed:", e)
+
+def search_api_async(
+    my_search_prompt,
+    user_api_key,
+    effort_selection,
+    spatial_resolution_for_search,
+    selected_london_borough=None
+):
+    import requests
+    import pandas as pd
+    # ping the endpoint to do the initial user search
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["search_endpoint_web"]}'
+    payload = {
+        "prompt": my_search_prompt,
+        "api_key": user_api_key,
+        "effort_selection": effort_selection,
+        "spatial_resolution_for_search": spatial_resolution_for_search,
+        "selected_london_borough": selected_london_borough,
+    }
+
+    # Launch the POST in a separate daemon thread — does not block
+    threading.Thread(
+        target=_post_in_background,
+        args=(base_api_address, payload),
+        daemon=True
+    ).start()
+
+    # Return immediately without waiting for the POST
+    return "job_triggered"
+
+# make client side function to get latest results 
+def client_get_last_search_results(api_key):
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["get_latest_results_endpoint"]}'
+    payload = {
+        "api_key":api_key
+    }
+    r = requests.post(base_api_address, json=payload, timeout=120)
+    if r.ok:
+        latest_results_json = r.json()["latest_search_results"]
+        results_df = pd.DataFrame.from_dict(json.loads(latest_results_json))
+        return results_df
+    
+def client_check_for_completed_job(api_key):
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["check_job_completion_endpoint"]}'
+    payload = {
+        "api_key":api_key
+    }
+    r = requests.post(base_api_address, json=payload, timeout=120)
+    if r.ok:
+        job_status = r.json()["job_complete"]
+        # st.write(job_status)
+        if job_status==1:
+            return "completed_job_found"
+        else:
+            latest_ckpt = r.json()["latest_ckpt"]
+            return f"no_completed_job_found_{latest_ckpt}"
+
+def client_model_thoughts_inspection(api_key):
+    base_api_address = f'{st.secrets["general"]["persistent_api"]}{st.secrets["general"]["inspect_search_model_endpoint"]}'
+    payload = {
+        "api_key": api_key
+    }
+    r = requests.post(base_api_address, json=payload, timeout=360)
+    # st.write(r)
+    if r.ok:
+        # Return the actual model thoughts content
+        # st.write(r.json())
+        latest_ckpt = r.json()["latest_ckpt"]
+        return latest_ckpt
+    else:
+        return None
+        
 # Initialize session state variables
 if 'spatial_resolution_for_search' not in st.session_state:
     st.session_state.spatial_resolution_for_search = None
@@ -321,142 +348,140 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
             if user_search_prompt is not None:
 
 
+
+
+
+
                 site_api_key = st.secrets["general"]["user_admin_api_key"]
 
-
-                initial_prompt_alignment_progress_placeholder = st.empty()
-                initial_prompt_alignment_progress_placeholder.info("Searching for your ideal location...")
-                time.sleep(3)
-                initial_prompt_alignment_progress_placeholder.empty()
-
-
-                cleaned_description = process_users_initial_prompt(user_search_prompt,site_api_key)
-
-                col1, col2 = st.columns(2) 
+                if spatial_resolution_for_search == "London - all":
+                    top_k_results_gdf = search_api_async(my_search_prompt=user_search_prompt,
+                                                    user_api_key=site_api_key,
+                                                    effort_selection=effort_selection,
+                                                    spatial_resolution_for_search=spatial_resolution_for_search)
+                elif spatial_resolution_for_search != "London - all" and selected_london_borough is not None:
+                    top_k_results_gdf = search_api_async(my_search_prompt=user_search_prompt,
+                                                    user_api_key=site_api_key,
+                                                    effort_selection=effort_selection,
+                                                    spatial_resolution_for_search=spatial_resolution_for_search,
+                                                    selected_london_borough=selected_london_borough)
+                    
+                
+                    
 
                 processing_stage_progress_placeholder = st.empty()
-                processing_stage_progress_placeholder.info("1/3 - Initial screening...")
 
-
-                user_query = cleaned_description # this is experimental
-                
-                if spatial_resolution_for_search=="London - all":
-
-                    h7_desc_df = search_locations_based_on_prompt_first_pass(    
-                        user_search_prompt_str=user_query,
-                        h3_level_res = 8,
-                        number_of_results = 50,
-                        api_key = site_api_key,
-                        lad_filter=None
-                    )
-                elif spatial_resolution_for_search=="London - boroughs":
-                    h7_desc_df = search_locations_based_on_prompt_first_pass(    
-                        user_search_prompt_str=user_query,
-                        h3_level_res = 8,
-                        number_of_results = 50,
-                        api_key = site_api_key,
-                        lad_filter=selected_london_borough
-                    )
-
-                relevant_locations_to_consider = h7_desc_df["location_id"].head(50)
-                st.session_state.relevant_locations_to_consider = relevant_locations_to_consider
-                
-                # going into stage 2
+                processing_stage_progress_placeholder.info(top_k_results_gdf)
+                time.sleep(7)
                 processing_stage_progress_placeholder.empty()
-                processing_stage_progress_placeholder.info("2/3 - Shortlisting... ")
-
-
-                if spatial_resolution_for_search=="London - all":
-                    search_results_df = search_locations_based_on_prompt_second_pass(
-                        user_search_prompt_str=user_query,
-                        h3_level_res = 9,
-                        number_of_results = number_of_results * 2,
-                        api_key = site_api_key,
-                        lad_filter=None
-                    )
-                elif spatial_resolution_for_search=="London - boroughs":
-                    search_results_df = search_locations_based_on_prompt_second_pass(
-                        user_search_prompt_str=user_query,
-                        h3_level_res = 9,
-                        number_of_results = number_of_results * 2,
-                        api_key = site_api_key,
-                        lad_filter=selected_london_borough
-                    )
-
-
-                # merge this back to the geodataframe
-                search_results_gdf = gp.GeoDataFrame(search_results_df, geometry = "geometry", crs=27700) 
-
-
-
-                if spatial_resolution_for_search == "London - all":
-
-                    search_results_gdf["contig_loc_descriptions"] = search_results_gdf["location_id"].apply(lambda x: get_contiguous_location_descriptions(origin_location=x,
-                                                                                                                                                            kring_integer=1,
-                                                                                                                                                            user_api_key=site_api_key))
-
-
-
-                else:
-                        
-                    # this will now add on the location descriptions paragraph for immediately contiguous locations
-                    search_results_gdf["contig_loc_descriptions"] = search_results_gdf["location_id"].apply(lambda x: get_contiguous_location_descriptions(origin_location=x,
-                                                                                                                                                            kring_integer=1,
-                                                                                                                                                            user_api_key=site_api_key))
-                
-                top_k_results_gdf = search_results_gdf.sort_values("search_results", ascending=False).head(number_of_results).reset_index().drop(columns="index")
-                top_k_results_gdf = top_k_results_gdf[["location_id","description","contig_loc_descriptions","search_results","wkt_geom"]].reset_index().drop(columns="index")
-                st.session_state.top_k_results_gdf = top_k_results_gdf
-
-
+                processing_stage_progress_placeholder.info("Initiating search... This may take a few minutes depending on the effort level you've selected.")
+                time.sleep(10)
                 processing_stage_progress_placeholder.empty()
-                processing_stage_progress_placeholder.info("3/3 - Final checks...")
+
+                # now we're going to check if the job is completed
+                exit_status = 0
+                prev_ckpt_completed = "No checkpoints yet"
+                prev_model_cot = "Not started"
+
+                model_cot_inspector = st.empty()
+                while exit_status==0:
+                    job_completed = client_check_for_completed_job(api_key=site_api_key)
+                    if job_completed!="completed_job_found":
+                        # get the latest checkpoint
+                        latest_ckpt_completed = job_completed.split("_found_")[-1]
+                        ckpt_message = latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[1:].lower() + " : " + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[1:].lower()
+                        processing_stage_progress_placeholder.info(ckpt_message)
+
+                        # Poll model thoughts every loop while we're in Stage 4 (not only when the checkpoint text changed)
+                        if "Stage 4" in ckpt_message:
+                            if "Not started" in prev_model_cot:
+                                model_cot_inspector.empty()
+                                model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
+                                time.sleep(1)
 
 
+                            # Poll the model thoughts endpoint every iteration
+                            current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
+
+                            if current_model_cot is not None:
+                                current_model_cot_eval = current_model_cot.lower().split("rationale:")[0]
+                                current_model_cot = current_model_cot.lower().split("rationale:")[-1]
+                                current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
+
+                                if current_model_cot != prev_model_cot:
+                                    model_cot_inspector.empty()
+                                    if "1" in current_model_cot_eval:
+                                        model_cot_inspector.success(current_model_cot)
+                                    else:
+                                        model_cot_inspector.info(current_model_cot)
+                                    prev_model_cot = current_model_cot
+                        if "Stage 4" not in ckpt_message:
+                            model_cot_inspector.empty() 
+
+                        if ckpt_message != prev_ckpt_completed:
+                            processing_stage_progress_placeholder.empty()
+
+                            time.sleep(1)
+                            processing_stage_progress_placeholder.info(ckpt_message)
+                            prev_ckpt_completed = ckpt_message
+
+                            if "Stage 4" in ckpt_message:
+                                if "Not started" in prev_model_cot:
+                                    model_cot_inspector.empty()
+                                    model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
+                                                                 
+                                time.sleep(5)  # Add delay between inspection calls
+                                current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
+
+                                if current_model_cot is not None and "_found_" in current_model_cot and "rationale:" in current_model_cot:
+                                    current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
+                                    current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
+                                    current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
+
+                                    if current_model_cot != prev_model_cot:
+                                        model_cot_inspector.empty()
+
+                                        if "1" in current_model_cot_eval:
+                                            model_cot_inspector.success(current_model_cot)
+                                        else:
+                                            model_cot_inspector.info(current_model_cot)
+
+                                        prev_model_cot = current_model_cot
+                     
+                        time.sleep(10)
+                    else:
+                        exit_status=1
+                processing_stage_progress_placeholder.success("Search completed!")
+                processing_stage_progress_placeholder.empty()
+                model_cot_inspector.empty()
+
+                time.sleep(3)
+
+                # once the job has completed we'll collect the results
+                top_k_results_gdf = client_get_last_search_results(api_key=site_api_key)
 
 
                 # -------------------------
                 # a stage will be added here for our custom models to consider all the locations
                 # -------------------------
+                processing_stage_progress_placeholder = st.empty()
+                # processing_stage_progress_placeholder.info("1/3 - Initial screening...")
 
+                # processing_stage_progress_placeholder.empty()
+                # processing_stage_progress_placeholder.info("2/3 - Shortlisting... ")
+
+                # processing_stage_progress_placeholder.empty()
+                # processing_stage_progress_placeholder.info("3/3 - Final checks...")
                 
-                progress_bar = st.progress(0, text=":grey[Evaluating locations!]")
 
                 progress_placeholder = st.empty()
 
-                # st.write(top_k_results_gdf["contig_loc_descriptions"].values[0])
-                llm_binary_evalutions_container = []
-                llm_rationale_container = []
-
-                for n in range(len(top_k_results_gdf)):
-                     
-                    eval_binary_response, eval_rationale = get_ai_evaluation_of_results_df(users_search_original=user_search_prompt,
-                               results_df=top_k_results_gdf[top_k_results_gdf.index==n].reset_index().drop(columns="index").head(1),
-                               user_api_key=site_api_key)
-                    llm_binary_evalutions_container.append(eval_binary_response)
-                    llm_rationale_container.append(eval_rationale)
-
-                    if float(eval_binary_response)==1 and len(eval_rationale)>10 :
-                        progress_placeholder.success(eval_binary_response +":"+eval_rationale)
-                        time.sleep(1)
-                    elif float(eval_binary_response)==0 and len(eval_rationale)>10:
-                        progress_placeholder.warning(eval_binary_response +":"+eval_rationale)
-                        time.sleep(1)
-
-                    progress_placeholder.empty()
-                    progress_bar.progress(n/(len(top_k_results_gdf)-1))
-
-                progress_bar.empty()
-
-
-                top_k_results_gdf["ai_model_evaluation"] = llm_binary_evalutions_container
-                top_k_results_gdf["ai_model_rationale"] = llm_rationale_container
-
+            
                 # make sure the evaluation is a number
-                top_k_results_gdf["ai_model_evaluation"] = top_k_results_gdf["ai_model_evaluation"].astype(float)
+                # top_k_results_gdf["ai_model_evaluation"] = top_k_results_gdf["ai_model_evaluation"].str.strip().astype(float)
                 
                 # st.dataframe(top_k_results_gdf)
-                if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>1:
+                if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>0:
                     top_k_results_gdf = top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1].reset_index().drop(columns="index")
 
                 else:
@@ -474,7 +499,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                 processing_stage_progress_placeholder.success("Here are your results...")
 
 
-                # gdf
+                col1, col2 = st.columns(2) 
 
                 with col1:
 
@@ -597,12 +622,7 @@ if col_run.button(" ▶  Run", type="primary"):          # nicer label
                                     selection_evaluation = gdf[gdf.index==location_idx]["ai_model_evaluation"].values[0]
                                     st.write(f"{location_description}")
                                     st.write(f"{selection_rationale}")
-                                    if selection_evaluation ==1:
-                                        log_search_process_completion(prompt=user_search_prompt,
-                                                                        completion=cleaned_description,
-                                                                        location_description=location_description,
-                                                                        user_api_key=site_api_key,
-                                                                        interaction_sentiment=1)
+   
 
                                 time.sleep(2)
                                 processing_stage_progress_placeholder.empty()
