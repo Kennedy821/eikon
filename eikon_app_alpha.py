@@ -662,82 +662,78 @@ with tab1:
     if col_clear.button("⟲ Clear"):
         st.session_state.clear()  # This clears all session state variables
         st.rerun()  # This reruns the entire app          # immediately refresh the page
+# ensure guard exists
+if 'load_previous_searches' not in st.session_state:
+    st.session_state.load_previous_searches = False
 
 with tab2:
     # this is going to be the tab to get your previous searches
     st.markdown('<div class="banner"></div>', unsafe_allow_html=True)
-    st.title(f"EIKON - previous searches")
+    st.title("EIKON - previous searches")
 
-    # we're going to have a selectbox to select previous searches
-    site_api_key = st.secrets["general"]["user_admin_api_key"]
+    # Show a button to explicitly load previous searches to avoid running on tab render
+    if not st.session_state.load_previous_searches:
+        if st.button("Load previous searches", key="load_prev_button"):
+            st.session_state.load_previous_searches = True
+            st.rerun()   # optional: refresh so UI shows loaded state
+        else:
+            st.info("Click 'Load previous searches' to fetch results.")
+    else:
+        site_api_key = st.secrets["general"]["user_admin_api_key"]
 
-    # we will call the endpoint to get previous searches
-    previous_searches_df = client_get_last_search_results_many(api_key=site_api_key, num_searches=3)
-    # figure out how many unique searches there are
-    unique_search_instances = previous_searches_df["search_instance_id"].unique().tolist()
+        # we will call the endpoint to get previous searches
+        previous_searches_df = client_get_last_search_results_many(api_key=site_api_key, num_searches=3)
+        # figure out how many unique searches there are
+        unique_search_instances = previous_searches_df["search_instance_id"].unique().tolist()
 
-    # now we're going to make a container with each one
-    for search_result in unique_search_instances:
-        with st.expander(f"Previous search: {search_result}"):
-            progress_placeholder = st.empty()
+        # now we're going to make a container with each one
+        for search_result in unique_search_instances:
+            with st.expander(f"Previous search: {search_result}"):
+                progress_placeholder = st.empty()
 
-            
-            top_k_results_gdf = previous_searches_df[previous_searches_df["search_instance_id"]==search_result].reset_index().drop(columns="index")
-            if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>0:
-                top_k_results_gdf = top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1].reset_index().drop(columns="index")
+                top_k_results_gdf = previous_searches_df[previous_searches_df["search_instance_id"]==search_result].reset_index().drop(columns="index")
+                if len(top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1])>0:
+                    top_k_results_gdf = top_k_results_gdf[top_k_results_gdf["ai_model_evaluation"]==1].reset_index().drop(columns="index")
+                else:
+                    progress_placeholder.error("It looks like there weren't any suitable locations found that match what you're looking for.")
 
-            else:
-                progress_placeholder.error("It looks like there weren't any suitable locations found that match what you're looking for.")
+                if st.session_state.init_gdf is None:
+                    top_k_results_gdf["geometry"] = top_k_results_gdf["wkt_geom"].apply(wkt.loads)
+                    gdf = gp.GeoDataFrame(top_k_results_gdf, geometry="geometry", crs=27700).to_crs(4326).set_index("location_id")
+                else:
+                    gdf = st.session_state.init_gdf
 
+                gdf = gdf.reset_index()
 
-            if st.session_state.init_gdf is None:
-                top_k_results_gdf["geometry"] = top_k_results_gdf["wkt_geom"].apply(wkt.loads)
-                gdf = gp.GeoDataFrame(top_k_results_gdf, geometry="geometry", crs=27700).to_crs(4326).set_index("location_id")
-            else:
-                gdf = st.session_state.init_gdf
+                for location_idx in range(len(top_k_results_gdf)):
+                    with st.container(border=True):
+                        st.write(f"Location: {location_idx+1}")
 
-            gdf = gdf.reset_index()           
-            
-            
-            
-            for location_idx in range(len(top_k_results_gdf)):
-                with st.container(border=True):
-                    st.write(f"Location: {location_idx+1}")
+                        viz_col1, viz_col2 = st.columns([3,8])
 
-                    viz_col1, viz_col2 = st.columns([3,8])
+                        location_lat_coord = gdf[gdf.index==location_idx].geometry.centroid.y.mean()
+                        location_lon_coord = gdf[gdf.index==location_idx].geometry.centroid.x.mean()
+                        location_id = gdf[gdf.index==location_idx]["location_id"].values[0]
 
-                    location_lat_coord = gdf[gdf.index==location_idx].geometry.centroid.y.mean()
-                    location_lon_coord = gdf[gdf.index==location_idx].geometry.centroid.x.mean()
-                    location_id = gdf[gdf.index==location_idx]["location_id"].values[0]
-                    print(location_lat_coord,location_lon_coord)
-
-                    with viz_col1:
+                        with viz_col1:
                             st.write(f"Selected Location: {location_idx+1}")
                             st.write(f"{location_id}")
-                            # load image of location 
-                            
-                            # this is for wimbledon low resolution 
                             payload = {"text": "placeholder",
-                                    "location": [location_lat_coord, location_lon_coord],
-                                    "resolution":"high",
-                                    "api_key": site_api_key}
+                                       "location": [location_lat_coord, location_lon_coord],
+                                       "resolution":"high",
+                                       "api_key": site_api_key}
                             r = requests.post(st.secrets["general"]["api_url_2"], json=payload, timeout=120)
                             if r.ok:
                                 b64_str = r.json()["location_image"]
-                                # 2) —— DECODE bytes -------------------------------------------------
                                 img_bytes = base64.b64decode(b64_str)
-
-                                # 3) —— LOAD into an image object -----------------------------------
-                                # Pillow can open from a bytes-buffer
                                 img = Image.open(io.BytesIO(img_bytes))
                                 st.image(img)
-                    with viz_col2:
-                        
-                        st.write(f"Location description")
-                        location_description = gdf[gdf.index==location_idx]['description'].values[0]
-                        selection_rationale = gdf[gdf.index==location_idx]['ai_model_rationale'].values[0]
-                        selection_evaluation = gdf[gdf.index==location_idx]["ai_model_evaluation"].values[0]
-                        st.write(f"{location_description}")
-                        st.write(f"{selection_rationale}")
+                        with viz_col2:
+                            st.write("Location description")
+                            location_description = gdf[gdf.index==location_idx]['description'].values[0]
+                            selection_rationale = gdf[gdf.index==location_idx]['ai_model_rationale'].values[0]
+                            selection_evaluation = gdf[gdf.index==location_idx]["ai_model_evaluation"].values[0]
+                            st.write(f"{location_description}")
+                            st.write(f"{selection_rationale}")
 
 
