@@ -1,0 +1,11 @@
+torch
+transformers
+datasets
+trl>=
+sentence-transformers
+reasoning-gym
+pandas
+fuzzywuzzy
+python-Levenshtein
+colorama
+numpy
