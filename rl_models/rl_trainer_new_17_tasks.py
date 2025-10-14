@@ -21,7 +21,7 @@ import numpy as np
 sbert_model = SentenceTransformer("mixedbread-ai/mxbai-embed-large-v1")
 
 # load the struct jsons for the level 9 data
-test_df = pd.read_parquet("/Users/tariromashongamhende/Local Files/ml_projects/satellite_slug/project_eikon//experiments/reinforcement_learning/training_data/cleaned_land_use_test_data_4_options.parquet.gzip")
+test_df = pd.read_parquet("")
 test_df = test_df.sample(frac=1).reset_index(drop=True)
 
 # ----------------------------
@@ -153,7 +153,7 @@ print(f"[Device] policy device = {DEVICE}")
 # Config
 # ----------------------------
 
-MODEL_NAME  = os.getenv("MODEL_NAME", "/Users/tariromashongamhende/Local Files/ml_projects/satellite_slug/project_eikon/experiments/reinforcement_learning/sft_smollm_135b_for_reasoning")   # policy
+MODEL_NAME  = os.getenv("MODEL_NAME", "")   # policy
 # Use a small default judge so it runs locally. Override with env if you want.
 # JUDGE_MODEL = os.getenv("JUDGE_MODEL", "HuggingFaceTB/SmolLM-1.7B")
 
@@ -162,7 +162,7 @@ TASK_NAME   = os.getenv("RG_TASK", "propositional_logic")
 
 SIZE        = int(os.getenv("RG_SIZE", "50"))
 SEED        = int(os.getenv("SEED", "42"))
-OUT_DIR = f"/Users/tariromashongamhende/Local Files/ml_projects/satellite_slug/project_eikon/experiments/reinforcement_learning/eikon_reasoning_model_17_tasks"
+OUT_DIR = f""
 
 os.makedirs(OUT_DIR, exist_ok=True)
 random.seed(SEED); torch.manual_seed(SEED)
