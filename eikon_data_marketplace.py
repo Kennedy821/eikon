@@ -460,27 +460,30 @@ with tab_downloads:
         
             # cache the entitlements list and datasets in the session state
             st.session_state.entitlements_list = entitlements_list
-            st.session_state.user_entitled_datasets = user_entitled_datasets        
-        processed_datasets = []
+            st.session_state.user_entitled_datasets = user_entitled_datasets      
+
+            
+              
+            processed_datasets = []
 
 
-        for idx in range(len(user_entitled_datasets)):
-            if entitlements_list[idx] not in processed_datasets:
-                with st.container(border=1):
-                    col1, col2 = st.columns([6,2])
-                    with col1:
-                        st.markdown(f"**{entitlements_list[idx]}**")
-                    with col2:
-                        dataset_n = convert_for_download(user_entitled_datasets[idx])
-                        
-                        # json.loads(dataset_n)
-                        # st.markdown(dataset_n)
-                        st.download_button(
-                            label=f"Download CSV {idx+1}",
-                            data=dataset_n,
-                            file_name=f"{user_entitled_datasets[idx]}.csv",
-                            mime="text/csv",
-                            icon=":material/download:",
-                        )
-                processed_datasets.append(entitlements_list[idx])     
+            for idx in range(len(user_entitled_datasets)):
+                if entitlements_list[idx] not in processed_datasets:
+                    with st.container(border=1):
+                        col1, col2 = st.columns([6,2])
+                        with col1:
+                            st.markdown(f"**{entitlements_list[idx]}**")
+                        with col2:
+                            dataset_n = convert_for_download(user_entitled_datasets[idx])
+                            
+                            # json.loads(dataset_n)
+                            # st.markdown(dataset_n)
+                            st.download_button(
+                                label=f"Download CSV {idx+1}",
+                                data=dataset_n,
+                                file_name=f"{user_entitled_datasets[idx]}.csv",
+                                mime="text/csv",
+                                icon=":material/download:",
+                            )
+                    processed_datasets.append(entitlements_list[idx])     
                         
