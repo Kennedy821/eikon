@@ -94,7 +94,8 @@ def load_entitled_datasets(single_dataset_id):
     if r.ok:
         valid_dataset_json = r.json()["requested_dataset"]
         return valid_dataset_json
-        
+
+@st.cache_data(ttl=600)  
 def collect_user_entitlements_data(api_key):
     # first we're going to load their entitlements
     user_entitlements = load_user_entitlements(api_key)
@@ -106,6 +107,7 @@ def collect_user_entitlements_data(api_key):
         dataset_containers.append(entitled_dataset_json_dict)
     return entitlements_list, dataset_containers
 
+@st.cache_data
 def convert_for_download(download_dataset_obj):
     df = pd.DataFrame.from_dict(json.loads(download_dataset_obj))
     return df.to_csv().encode("utf-8")
@@ -464,28 +466,28 @@ with tab_downloads:
 
 
 
-            processed_datasets = []
+        processed_datasets = []
 
 
-            for idx in range(len(user_entitled_datasets)):
-                if entitlements_list[idx] not in processed_datasets:
-                    with st.container(border=1):
-                        col1, col2 = st.columns([6,2])
-                        with col1:
-                            st.markdown(f"**{entitlements_list[idx]}**")
-                        with col2:
-                            dataset_n = convert_for_download(user_entitled_datasets[idx])
-                            
-                            # json.loads(dataset_n)
-                            # st.markdown(dataset_n)
-                            st.download_button(
-                                label=f"Download CSV {idx+1}",
-                                data=dataset_n,
-                                file_name=f"data.csv",
-                                mime="text/csv",
-                                icon=":material/download:",
-                            )
-                    processed_datasets.append(entitlements_list[idx])    
+        for idx in range(len(user_entitled_datasets)):
+            if entitlements_list[idx] not in processed_datasets:
+                with st.container(border=1):
+                    col1, col2 = st.columns([6,2])
+                    with col1:
+                        st.markdown(f"**{entitlements_list[idx]}**")
+                    with col2:
+                        dataset_n = convert_for_download(user_entitled_datasets[idx])
+                        
+                        # json.loads(dataset_n)
+                        # st.markdown(dataset_n)
+                        st.download_button(
+                            label=f"Download CSV {idx+1}",
+                            data=dataset_n,
+                            file_name=f"data.csv",
+                            mime="text/csv",
+                            icon=":material/download:",
+                        )
+                processed_datasets.append(entitlements_list[idx])    
 
-            st.stop()
+        st.stop()
                         
