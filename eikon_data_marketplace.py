@@ -118,15 +118,15 @@ PRODUCTS = [
         "title": "UK embeddings low res",
         "price_gbp": 1_00,
         "summary": "Location embeddings for UK at H3 resolution 7.",
-        "filesize_mb": 520,
+        "filesize_mb": 4,
     },
-    # {
-    #     "id": "london_buildings_v2",
-    #     "title": "London Buildings (v2)",
-    #     "price_gbp": 5_00,
-    #     "summary": "Building footprints & attributes for Greater London.",
-    #     "filesize_mb": 780,
-    # },
+    {
+        "id": "med_resolution_visual_embeddings_res_8_united_kingdom",
+        "title": "UK embeddings med res",
+        "price_gbp": 10_00,
+        "summary": "Location embeddings for UK at H3 resolution 8.",
+        "filesize_mb": 38,
+    },
 ]
 
 def get_product(pid): return next(p for p in PRODUCTS if p["id"] == pid)
@@ -441,8 +441,6 @@ with tab_downloads:
         user_api_key = get_api_key_from_credentials_secure(email=email,password=password )
 
         entitlements_list , user_entitled_datasets = collect_user_entitlements_data(user_api_key)
-
-        
         processed_datasets = []
 
         for idx in range(len(user_entitled_datasets)):
@@ -463,8 +461,5 @@ with tab_downloads:
                             mime="text/csv",
                             icon=":material/download:",
                         )
-                processed_datasets.append(entitlements_list[idx]) 
-            else:
-                pass
-                        
+                processed_datasets.append(entitlements_list[idx])     
                         
