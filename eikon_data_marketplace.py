@@ -481,9 +481,11 @@ with tab_downloads:
                             st.download_button(
                                 label=f"Download CSV {idx+1}",
                                 data=dataset_n,
-                                file_name=f"{user_entitled_datasets[idx]}.csv",
+                                file_name=f"data.csv",
                                 mime="text/csv",
                                 icon=":material/download:",
                             )
-                    processed_datasets.append(entitlements_list[idx])     
+                    processed_datasets.append(entitlements_list[idx])    
+
+            st.stop()
                         
