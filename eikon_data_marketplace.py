@@ -142,6 +142,16 @@ def remove_from_cart(pid):
 
 
 
+
+
+# Initialize session state variables
+if 'entitlements_list' not in st.session_state:
+    st.session_state.entitlements_list = None
+
+if 'user_entitled_datasets' not in st.session_state:
+    st.session_state.user_entitled_datasets = None
+
+
 # ---------------------------------------------------------------------------------
 # actual app
 # -----------
@@ -440,8 +450,19 @@ with tab_downloads:
     if email and password:
         user_api_key = get_api_key_from_credentials_secure(email=email,password=password )
 
-        entitlements_list , user_entitled_datasets = collect_user_entitlements_data(user_api_key)
+        # before collecting the data check to make sure it isn't in cache
+        if "entitlements_list" in st.session_state and "user_entitled_datasets" in st.session_state:
+            entitlements_list = st.session_state.entitlements_list
+            user_entitled_datasets = st.session_state.user_entitled_datasets
+        else:
+
+            entitlements_list , user_entitled_datasets = collect_user_entitlements_data(user_api_key)
+        
+            # cache the entitlements list and datasets in the session state
+            st.session_state.entitlements_list = entitlements_list
+            st.session_state.user_entitled_datasets = user_entitled_datasets        
         processed_datasets = []
+
 
         for idx in range(len(user_entitled_datasets)):
             if entitlements_list[idx] not in processed_datasets:
@@ -457,7 +478,7 @@ with tab_downloads:
                         st.download_button(
                             label=f"Download CSV {idx+1}",
                             data=dataset_n,
-                            file_name="data.csv",
+                            file_name=f"{user_entitled_datasets[idx]}.csv",
                             mime="text/csv",
                             icon=":material/download:",
                         )
