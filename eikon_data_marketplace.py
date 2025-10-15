@@ -455,7 +455,7 @@ with tab_downloads:
                         # json.loads(dataset_n)
                         # st.markdown(dataset_n)
                         st.download_button(
-                            label="Download CSV",
+                            label=f"Download CSV {idx+1}",
                             data=dataset_n,
                             file_name="data.csv",
                             mime="text/csv",
