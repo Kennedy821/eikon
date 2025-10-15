@@ -451,7 +451,7 @@ with tab_downloads:
         user_api_key = get_api_key_from_credentials_secure(email=email,password=password )
 
         # before collecting the data check to make sure it isn't in cache
-        if "entitlements_list" in st.session_state and "user_entitled_datasets" in st.session_state:
+        if "entitlements_list" in st.session_state and "user_entitled_datasets" in st.session_state and st.session_state.entitlements_list is not None and st.session_state.user_entitled_datasets is not None:
             entitlements_list = st.session_state.entitlements_list
             user_entitled_datasets = st.session_state.user_entitled_datasets
         else:
@@ -462,8 +462,8 @@ with tab_downloads:
             st.session_state.entitlements_list = entitlements_list
             st.session_state.user_entitled_datasets = user_entitled_datasets      
 
-            
-              
+
+
             processed_datasets = []
 
 
