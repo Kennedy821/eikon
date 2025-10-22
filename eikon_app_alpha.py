@@ -478,10 +478,11 @@ with tab1:
                                                 prev_model_cot = current_model_cot
                             
                                 time.sleep(10)
+
+                            else:
+                                exit_status=1
                         except Exception as e:
                             pass
-                        else:
-                            exit_status=1
                     processing_stage_progress_placeholder.success("Search completed!")
                     processing_stage_progress_placeholder.empty()
                     model_cot_inspector.empty()
