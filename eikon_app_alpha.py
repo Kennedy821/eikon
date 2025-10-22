@@ -403,7 +403,7 @@ with tab1:
                     time.sleep(7)
                     processing_stage_progress_placeholder.empty()
                     processing_stage_progress_placeholder.info("Initiating search... This may take a few minutes depending on the effort level you've selected.")
-                    time.sleep(10)
+                    time.sleep(30)
                     processing_stage_progress_placeholder.empty()
 
                     # now we're going to check if the job is completed
@@ -413,70 +413,73 @@ with tab1:
 
                     model_cot_inspector = st.empty()
                     while exit_status==0:
-                        job_completed = client_check_for_completed_job(api_key=site_api_key)
-                        if job_completed!="completed_job_found":
-                            # get the latest checkpoint
-                            latest_ckpt_completed = job_completed.split("_found_")[-1]
-                            ckpt_message = latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[1:].lower() + " : " + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[1:].lower()
-                            processing_stage_progress_placeholder.info(ckpt_message)
-
-                            # Poll model thoughts every loop while we're in Stage 4 (not only when the checkpoint text changed)
-                            if "Stage 4" in ckpt_message:
-                                if "Not started" in prev_model_cot:
-                                    model_cot_inspector.empty()
-                                    model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
-                                    time.sleep(1)
-
-
-                                # Poll the model thoughts endpoint every iteration
-                                current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
-
-                                if current_model_cot is not None:
-                                    current_model_cot_eval = current_model_cot.lower().split("rationale:")[0]
-                                    current_model_cot = current_model_cot.lower().split("rationale:")[-1]
-                                    current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
-
-                                    if current_model_cot != prev_model_cot:
-                                        model_cot_inspector.empty()
-                                        if "1" in current_model_cot_eval:
-                                            model_cot_inspector.success(current_model_cot)
-                                        else:
-                                            model_cot_inspector.info(current_model_cot)
-                                        prev_model_cot = current_model_cot
-                            if "Stage 4" not in ckpt_message:
-                                model_cot_inspector.empty() 
-
-                            if ckpt_message != prev_ckpt_completed:
-                                processing_stage_progress_placeholder.empty()
-
-                                time.sleep(1)
+                        try:
+                            job_completed = client_check_for_completed_job(api_key=site_api_key)
+                            if job_completed!="completed_job_found":
+                                # get the latest checkpoint
+                                latest_ckpt_completed = job_completed.split("_found_")[-1]
+                                ckpt_message = latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[0].replace("_"," ").strip()[1:].lower() + " : " + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[:1].upper() + latest_ckpt_completed.split("complete")[-1].split(".txt")[0].replace("_"," ").strip()[1:].lower()
                                 processing_stage_progress_placeholder.info(ckpt_message)
-                                prev_ckpt_completed = ckpt_message
-
+    
+                                # Poll model thoughts every loop while we're in Stage 4 (not only when the checkpoint text changed)
                                 if "Stage 4" in ckpt_message:
                                     if "Not started" in prev_model_cot:
                                         model_cot_inspector.empty()
                                         model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
-                                                                    
-                                    time.sleep(5)  # Add delay between inspection calls
+                                        time.sleep(1)
+    
+    
+                                    # Poll the model thoughts endpoint every iteration
                                     current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
-
-                                    if current_model_cot is not None and "_found_" in current_model_cot and "rationale:" in current_model_cot:
-                                        current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
-                                        current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
+    
+                                    if current_model_cot is not None:
+                                        current_model_cot_eval = current_model_cot.lower().split("rationale:")[0]
+                                        current_model_cot = current_model_cot.lower().split("rationale:")[-1]
                                         current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
-
+    
                                         if current_model_cot != prev_model_cot:
                                             model_cot_inspector.empty()
-
                                             if "1" in current_model_cot_eval:
                                                 model_cot_inspector.success(current_model_cot)
                                             else:
                                                 model_cot_inspector.info(current_model_cot)
-
                                             prev_model_cot = current_model_cot
-                        
-                            time.sleep(10)
+                                if "Stage 4" not in ckpt_message:
+                                    model_cot_inspector.empty() 
+    
+                                if ckpt_message != prev_ckpt_completed:
+                                    processing_stage_progress_placeholder.empty()
+    
+                                    time.sleep(1)
+                                    processing_stage_progress_placeholder.info(ckpt_message)
+                                    prev_ckpt_completed = ckpt_message
+    
+                                    if "Stage 4" in ckpt_message:
+                                        if "Not started" in prev_model_cot:
+                                            model_cot_inspector.empty()
+                                            model_cot_inspector.info("Model is now evaluating locations... This may take a few minutes.")
+                                                                        
+                                        time.sleep(5)  # Add delay between inspection calls
+                                        current_model_cot = client_model_thoughts_inspection(api_key=site_api_key)
+    
+                                        if current_model_cot is not None and "_found_" in current_model_cot and "rationale:" in current_model_cot:
+                                            current_model_cot_eval = current_model_cot.split("_found_")[-1].split("rationale:")[0]
+                                            current_model_cot = current_model_cot.split("_found_")[-1].split("rationale:")[-1]
+                                            current_model_cot = current_model_cot.replace("_"," ").strip()[:1].upper() + current_model_cot.replace("_"," ").strip()[1:].lower()
+    
+                                            if current_model_cot != prev_model_cot:
+                                                model_cot_inspector.empty()
+    
+                                                if "1" in current_model_cot_eval:
+                                                    model_cot_inspector.success(current_model_cot)
+                                                else:
+                                                    model_cot_inspector.info(current_model_cot)
+    
+                                                prev_model_cot = current_model_cot
+                            
+                                time.sleep(10)
+                        except Exception as e:
+                            pass
                         else:
                             exit_status=1
                     processing_stage_progress_placeholder.success("Search completed!")
