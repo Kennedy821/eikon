@@ -70,6 +70,21 @@ print(visual_similarity)
 
 ```
 
+
+# Update for version 0.9.1
+
+Version 0.9.1 brings one major new module called jobs. This is a module that allows for asynchronous processing of user queries.
+
+* Search - the search_api is for specific search focused queries such as " I am looking to find a solar panel farm in an agricultural area that is accessible only via small roads". This function has the added functionality of being able to specify named areas that you would like to focus your search queries in (for example i.e. Camden, Hillingdon etc.). This function runs in an asynchronous manner meaning that requests will be processed based on compute availability. An example of how to run this function is provided on the Eikon SDK Github page.
+
+* Porfolio comparison - the portfoilio_comparison function allows for comparisons based on similarity of two lists of location pairs in an efficient manner. For example it is possible to compare Wembley stadium to all locations in Greater London for similarity within ~5 mins. An example of how to run this function is provided on the Eikon SDK Github page.
+
+We hope you will enjoy using the jobs module. This represents a new approach to using machine learning and AI together with geospatial processing techniques to achieve things that weren't possible a few years ago. 
+
+
+
 # Background
 
 All qualifying education email addresses will be provided with free credits for each month for research purposes. To access these credits you must be enrolled on a UK recognised postgraduate degree programme [listed here](https://www.postgrad.com/).
+
+
