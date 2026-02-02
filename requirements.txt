@@ -9,7 +9,7 @@ plotly-express
 pillow
 pandas
 geopandas
-h3
+h3==3.7.7
 shapely
 pydeck==0.9.1
 stripe
