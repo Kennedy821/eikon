@@ -41,7 +41,7 @@ im = Image.open('eikon_logo_tes_v4.png')
 
 # Page configuration
 st.set_page_config(
-    page_title="EIKON - Satellite Intelligence",
+    page_title="EIKON",
     page_icon=im,
     layout="wide",
     initial_sidebar_state="expanded"
@@ -73,6 +73,41 @@ st.markdown("""
         height: 50px;
         padding: 10px 20px;
         font-weight: 500;
+    }
+    .credits-box {
+        position: fixed;
+        top: 60px;
+        right: 20px;
+        background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+        color: #1E3A5F;
+        padding: 12px 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(30, 58, 95, 0.12), 0 1px 3px rgba(0,0,0,0.08);
+        border: 1px solid rgba(30, 58, 95, 0.1);
+        z-index: 1000;
+        min-width: 140px;
+        text-align: center;
+        backdrop-filter: blur(10px);
+    }
+    .credits-box .credits-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #6b7280;
+        margin-bottom: 4px;
+    }
+    .credits-box .credits-value {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #1E3A5F;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .credits-box .credits-currency {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #1E3A5F;
+        margin-right: 2px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -131,6 +166,31 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, Optional[str]]:
     except Exception as e:
         st.error(f"Authentication error: {str(e)}")
         return False, None
+
+
+def get_user_credit_balance(api_key: str) -> Optional[float]:
+    """
+    Get the current credit balance for a user.
+
+    Args:
+        api_key: User's API key
+
+    Returns:
+        Current credit balance or None if unavailable
+    """
+    if not EIKON_AVAILABLE:
+        # Demo mode - return mock balance
+        return 1000.0
+
+    try:
+        base_api_address = 'https://slugai.pagekite.me/check_eikon_api_credits'
+        payload = {"api_key": api_key}
+        r = requests.post(base_api_address, json=payload, timeout=10)
+        if r.ok:
+            return r.json().get("current_api_credit_balance")
+        return None
+    except Exception:
+        return None
 
 
 def search_locations(
@@ -843,7 +903,7 @@ def _generate_mock_chat_response(user_message: str) -> Dict[str, Any]:
     message_lower = user_message.lower()
 
     if any(word in message_lower for word in ["hello", "hi", "hey", "greetings"]):
-        response_text = "Hello! I'm EIKON, your satellite intelligence assistant. I can help you explore locations, find places matching specific criteria, compare areas, and detect objects in satellite imagery. What would you like to know about?"
+        response_text = "Hello! I'm EIKON, your geospatial intelligence assistant. I can help you explore locations, find places matching specific criteria, compare areas, and detect objects in satellite imagery. What would you like to know about?"
         images = None
 
     elif any(word in message_lower for word in ["park", "green", "nature"]):
@@ -2673,6 +2733,16 @@ def render_main_app():
 
         if not EIKON_AVAILABLE:
             st.warning("Demo Mode Active")
+
+    # Credits quota box (top right)
+    credit_balance = get_user_credit_balance(st.session_state.api_key)
+    if credit_balance is not None:
+        st.markdown(f'''
+        <div class="credits-box">
+            <div class="credits-label">Credit Balance</div>
+            <div class="credits-value"><span class="credits-currency">£</span>{credit_balance:,.2f}</div>
+        </div>
+        ''', unsafe_allow_html=True)
 
     # Main content
     st.markdown('<p class="main-header">EIKON</p>', unsafe_allow_html=True)
