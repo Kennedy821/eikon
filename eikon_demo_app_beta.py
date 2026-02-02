@@ -908,7 +908,7 @@ LONDON_BOROUGHS = [
 def render_login_page():
     """Render the login/authentication page."""
     st.markdown('<p class="main-header">EIKON</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Satellite Intelligence Platform</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Understand your world</p>', unsafe_allow_html=True)
 
     if not EIKON_AVAILABLE:
         st.warning("Running in demo mode - eikonsai package not installed. Install with: `pip install eikonsai`")
