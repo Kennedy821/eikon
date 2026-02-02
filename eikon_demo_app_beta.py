@@ -157,8 +157,8 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, Optional[str]]:
 
     try:
         api_key = eikon.utils.get_api_key_from_credentials(
-            email=str(email).lower(),
-            password=str(password)
+            email=str(email).lower().strip(),
+            password=str(password).strip()
         )
         if api_key:
             return True, api_key
