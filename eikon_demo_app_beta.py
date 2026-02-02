@@ -2660,7 +2660,7 @@ def render_main_app():
         st.markdown("---")
         st.markdown("### About EIKON")
         st.markdown("""
-        EIKON is a satellite intelligence platform that enables:
+        EIKON is a geospatial AI system that enables:
         - AI-powered chat interface
         - Natural language location search
         - Location context analysis
@@ -2676,7 +2676,7 @@ def render_main_app():
 
     # Main content
     st.markdown('<p class="main-header">EIKON</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Satellite Intelligence Platform</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Understand your world</p>', unsafe_allow_html=True)
 
     # Tabs
     tab_chat, tab_search, tab_context, tab_similarity, tab_portfolio, tab_objects, tab_history = st.tabs([
