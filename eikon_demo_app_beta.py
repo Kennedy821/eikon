@@ -15,6 +15,7 @@ import numpy as np
 import pydeck as pdk
 import time
 import io
+import os
 import base64
 import requests
 import json
@@ -122,6 +123,7 @@ def init_session_state():
         'user_email': None,
         'search_results': None,
         'search_history': [],
+        'search_in_progress': False,  # Track if search is currently running
         'context_results': None,
         'similarity_results': None,
         'comparison_results': None,
@@ -157,8 +159,8 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, Optional[str]]:
 
     try:
         api_key = eikon.utils.get_api_key_from_credentials(
-            email=str(email).lower().strip(),
-            password=str(password).strip()
+            email=email,
+            password=str(password)
         )
         if api_key:
             return True, api_key
@@ -203,6 +205,9 @@ def search_locations(
     """
     Execute a search query using the Eikon Search API.
 
+    Uses the queue endpoint to process requests one at a time,
+    preventing OOM errors on the server.
+
     Args:
         prompt: Natural language search query
         api_key: User's API key
@@ -218,16 +223,32 @@ def search_locations(
         return _generate_mock_search_results(prompt)
 
     try:
-        kwargs = {
-            'my_search_prompt': prompt,
-            'user_api_key': api_key,
-            'effort_selection': effort,
-            'spatial_resolution_for_search': spatial_resolution,
+        # Use the queue endpoint to avoid OOM errors on the server
+        # The queue processes requests one at a time
+        base_api_address = 'https://slugai.pagekite.me/eikon_search_agent_api_queue'
+        payload = {
+            "prompt": prompt,
+            "api_key": api_key,
+            "effort_selection": effort,
+            "spatial_resolution_for_search": spatial_resolution,
         }
         if spatial_resolution == "London - boroughs" and borough:
-            kwargs['selected_london_borough'] = borough
+            payload['selected_london_borough'] = borough
 
-        results = eikon.jobs.search_api(**kwargs)
+        r = requests.post(base_api_address, json=payload, timeout=10000)
+
+        if r.ok:
+            response_data = r.json()
+            if "successful_job_completion" in response_data:
+                # Parse results from the response
+                results_json = response_data["successful_job_completion"]
+                results = pd.DataFrame.from_dict(json.loads(results_json))
+            else:
+                st.error(f"Search failed: {response_data}")
+                return None
+        else:
+            st.error(f"Search request failed: {r.status_code}")
+            return None
 
         # Convert H3 location IDs to latitude/longitude if not already present
         if results is not None and isinstance(results, pd.DataFrame) and not results.empty:
@@ -252,6 +273,258 @@ def search_locations(
     except Exception as e:
         st.error(f"Search error: {str(e)}")
         return None
+
+
+# ============================================================================
+# Search Agent Observability Functions
+# ============================================================================
+
+SEARCH_STAGES = {
+    "stage_1_complete_initial_processing.txt": {
+        "name": "Initial Processing",
+        "description": "Processing your search query...",
+        "icon": "🔍",
+        "progress": 15
+    },
+    "stage_2_complete_initial_screening.txt": {
+        "name": "Initial Screening",
+        "description": "Scanning locations across the search area...",
+        "icon": "📍",
+        "progress": 30
+    },
+    "stage_3_complete_secondary_screening.txt": {
+        "name": "Secondary Screening",
+        "description": "Refining candidate locations...",
+        "icon": "🎯",
+        "progress": 50
+    },
+    "stage_4_complete_additional_location_context_considered.txt": {
+        "name": "Context Analysis",
+        "description": "Gathering additional location context...",
+        "icon": "🗺️",
+        "progress": 65
+    },
+    "stage_5_complete_evaluation_and_reflection.txt": {
+        "name": "AI Evaluation",
+        "description": "AI models evaluating results...",
+        "icon": "🤖",
+        "progress": 85
+    },
+    "stage_6_complete_final_results.txt": {
+        "name": "Complete",
+        "description": "Search complete!",
+        "icon": "✅",
+        "progress": 100
+    }
+}
+
+
+def get_search_progress_dir(api_key: str) -> str:
+    """Get the progress directory path for a user's search job."""
+    return f"/Users/tariromashongamhende/Local Files/ml_projects/satellite_slug/project_eikon/mapping_tables/user_data_tables/users/{api_key}"
+
+
+def get_model_thoughts_dir(api_key: str) -> str:
+    """Get the model thoughts directory path for AI evaluation stage."""
+    return f"/Users/tariromashongamhende/Local Files/ml_projects/satellite_slug/project_eikon/mapping_tables/user_data_tables/users/{api_key}/model_thoughts"
+
+
+def check_search_progress(api_key: str) -> Dict[str, Any]:
+    """
+    Check the current progress of a search job by examining stage files.
+
+    Returns:
+        Dictionary with progress info including current stage, progress percentage,
+        and any available stage content.
+    """
+    import os
+
+    progress_dir = get_search_progress_dir(api_key)
+
+    if not os.path.exists(progress_dir):
+        return {
+            "stage": None,
+            "progress": 0,
+            "description": "Initializing search...",
+            "icon": "⏳",
+            "content": None
+        }
+
+    # Get all stage files present
+    files = os.listdir(progress_dir)
+    stage_files = [f for f in files if f.startswith("stage_") and f.endswith(".txt")]
+
+    if not stage_files:
+        return {
+            "stage": None,
+            "progress": 5,
+            "description": "Starting search process...",
+            "icon": "🚀",
+            "content": None
+        }
+
+    # Sort to get the latest stage
+    stage_files.sort()
+    latest_stage_file = stage_files[-1]
+
+    # Get stage info
+    stage_info = SEARCH_STAGES.get(latest_stage_file, {
+        "name": "Processing",
+        "description": "Processing...",
+        "icon": "⚙️",
+        "progress": 50
+    })
+
+    # Read stage content if available
+    content = None
+    try:
+        with open(os.path.join(progress_dir, latest_stage_file), "r") as f:
+            content = f.read()
+    except:
+        pass
+
+    return {
+        "stage": stage_info["name"],
+        "progress": stage_info["progress"],
+        "description": stage_info["description"],
+        "icon": stage_info["icon"],
+        "content": content,
+        "is_complete": latest_stage_file == "stage_6_complete_final_results.txt"
+    }
+
+
+def get_ai_model_thoughts(api_key: str) -> Dict[str, Any]:
+    """
+    Get the latest AI model thoughts during the evaluation stage.
+
+    Returns:
+        Dictionary with model thoughts info including count, latest thought, etc.
+    """
+    import os
+
+    model_dir = get_model_thoughts_dir(api_key)
+
+    if not os.path.exists(model_dir):
+        return {
+            "available": False,
+            "count": 0,
+            "latest": None,
+            "is_final": False
+        }
+
+    files = os.listdir(model_dir)
+    thought_files = [f for f in files if f.startswith("thoughts_")]
+
+    if not thought_files:
+        return {
+            "available": False,
+            "count": 0,
+            "latest": None,
+            "is_final": False
+        }
+
+    thought_files.sort()
+    latest_file = thought_files[-1]
+    is_final = latest_file == "thoughts_final.txt"
+
+    # Read latest thought
+    latest_thought = None
+    try:
+        with open(os.path.join(model_dir, latest_file), "r") as f:
+            latest_thought = f.read()
+    except:
+        pass
+
+    return {
+        "available": True,
+        "count": len(thought_files),
+        "latest": latest_thought,
+        "is_final": is_final
+    }
+
+
+def parse_model_thought(thought_text: str) -> Dict[str, str]:
+    """Parse a model thought text file into evaluation and rationale."""
+    if not thought_text:
+        return {"evaluation": None, "rationale": None}
+
+    evaluation = None
+    rationale = None
+
+    for line in thought_text.split("\n"):
+        if line.startswith("AI Evaluation:"):
+            evaluation = line.replace("AI Evaluation:", "").strip()
+        elif line.startswith("AI Rationale:"):
+            rationale = line.replace("AI Rationale:", "").strip()
+
+    return {"evaluation": evaluation, "rationale": rationale}
+
+
+def get_search_final_results(api_key: str) -> Optional[str]:
+    """Get the final results JSON from stage 6 file."""
+    import os
+
+    progress_dir = get_search_progress_dir(api_key)
+    results_file = os.path.join(progress_dir, "stage_6_complete_final_results.txt")
+
+    if os.path.exists(results_file):
+        try:
+            with open(results_file, "r") as f:
+                return f.read()
+        except:
+            pass
+    return None
+
+
+def get_stage_1_info(api_key: str) -> Optional[Dict[str, str]]:
+    """Get the processed prompt info from stage 1."""
+    import os
+
+    progress_dir = get_search_progress_dir(api_key)
+    stage_file = os.path.join(progress_dir, "stage_1_complete_initial_processing.txt")
+
+    if os.path.exists(stage_file):
+        try:
+            with open(stage_file, "r") as f:
+                content = f.read()
+
+            original = None
+            cleaned = None
+            for line in content.split("\n"):
+                if line.startswith("Original Prompt:"):
+                    original = line.replace("Original Prompt:", "").strip()
+                elif line.startswith("Cleaned Prompt:"):
+                    cleaned = line.replace("Cleaned Prompt:", "").strip()
+
+            return {"original": original, "cleaned": cleaned}
+        except:
+            pass
+    return None
+
+
+def get_relevant_location_count(api_key: str) -> Optional[int]:
+    """Get the count of locations being considered from stage 2."""
+    import os
+
+    progress_dir = get_search_progress_dir(api_key)
+    file_for_consideration = sorted([x for x in os.listdir(progress_dir) if x.startswith("stage_")])[-1]
+    stage_file = os.path.join(progress_dir,file_for_consideration)
+
+    if os.path.exists(stage_file):
+        try:
+            with open(stage_file, "r") as f:
+                content = f.read()
+            # Extract location count from the content
+            if "Relevant Locations to Consider:" in content:
+                # Parse the list to count locations
+                import re
+                match = re.search(r'\[([^\]]+)\]', content)
+                if match:
+                    locations = match.group(1).split(",")
+                    return len([l for l in locations if l.strip()])
+        except:
+            pass
+    return None
 
 
 def get_location_description(
@@ -1137,9 +1410,15 @@ def render_location_cards(results_df: pd.DataFrame):
             st.markdown("**Coordinates**")
             st.code(f"Lat: {lat:.6f}\nLon: {lon:.6f}")
 
+            if h3.h3_get_resolution(location_id)==9:
+                appropriate_resolution = "high"
+            if h3.h3_get_resolution(location_id)==8:
+                appropriate_resolution = "medium"
+            if h3.h3_get_resolution(location_id)==7:
+                appropriate_resolution = "low"
             st.image(eikon.context.get_location_image(lat=lat,
                                                         lon=lon,
-                                                        resolution="medium",
+                                                        resolution=appropriate_resolution,
                                                         user_api_key=st.session_state.api_key))
 
             # AI Evaluation
@@ -1263,7 +1542,7 @@ def render_search_tab():
             effort_level = st.select_slider(
                 "Search Effort",
                 options=["test", "quick", "moderate", "exhaustive"],
-                value="quick",
+                value="test",
                 help="Higher effort = more thorough search, but takes longer"
             )
 
@@ -1281,26 +1560,181 @@ def render_search_tab():
                     'borough': selected_borough
                 }
 
-                with st.spinner(f"Searching with {effort_level} effort..."):
-                    results = search_locations(
-                        prompt=search_prompt,
-                        api_key=st.session_state.api_key,
-                        effort=effort_level,
-                        spatial_resolution=spatial_resolution,
-                        borough=selected_borough
-                    )
+                user_api_key = st.session_state.api_key
 
-                    if results is not None and not results.empty:
-                        st.session_state.search_results = results
-                        st.session_state.last_search_params = current_params
-                        st.session_state.search_history.append({
-                            'query': search_prompt,
-                            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
-                            'results_count': len(results)
-                        })
-                        st.success(f"Found {len(results)} locations!")
+                # Show search progress UI
+                st.markdown("### Search in Progress")
+                st.markdown(f"**Query:** {search_prompt}")
+                st.markdown(f"**Effort Level:** {effort_level}")
+
+                # Create UI containers for live updates
+                progress_bar = st.progress(0)
+                status_container = st.empty()
+                stage_detail_container = st.empty()
+                ai_thoughts_container = st.empty()
+
+                # Start the search API call in a background thread
+                import threading
+                search_result_holder = {'result': None, 'error': None, 'done': False}
+
+                def run_search_thread():
+                    try:
+                        search_result_holder['result'] = search_locations(
+                            prompt=search_prompt,
+                            api_key=user_api_key,
+                            effort=effort_level,
+                            spatial_resolution=spatial_resolution,
+                            borough=selected_borough
+                        )
+                    except Exception as e:
+                        search_result_holder['error'] = str(e)
+                    finally:
+                        search_result_holder['done'] = True
+
+                search_thread = threading.Thread(target=run_search_thread)
+                search_thread.start()
+
+                # Poll for progress while search is running
+                last_stage = None
+                last_thought_count = 0
+
+                while not search_result_holder['done']:
+                    # Check progress via the API endpoint
+                    try:
+                        progress_response = requests.post(
+                            'https://slugai.pagekite.me/check_if_eikon_search_agent_api_job_complete_web',
+                            json={"api_key": user_api_key},
+                            timeout=5
+                        )
+                        if progress_response.ok:
+                            progress_data = progress_response.json()
+
+                            if progress_data.get('job_complete'):
+                                progress_bar.progress(100)
+                                status_container.success("**Search Complete!**")
+                            else:
+                                latest_ckpt = progress_data.get('latest_ckpt', '')
+
+                                # Update UI based on checkpoint
+                                if 'stage_1' in latest_ckpt:
+                                    progress_bar.progress(15)
+                                    status_container.info("**Stage 1/6:** Done processing your search query...")
+                                elif 'stage_2' in latest_ckpt:
+                                    progress_bar.progress(30)
+                                    status_container.info("**Stage 2/6:** Done initial screening of locations...")
+                                    # Show location count
+                                    loc_count = get_relevant_location_count(user_api_key)
+                                    if loc_count:
+                                        stage_detail_container.caption(f"Scanning {loc_count} candidate locations...")
+                                elif 'stage_3' in latest_ckpt:
+                                    progress_bar.progress(50)
+                                    status_container.info("**Stage 3/6:** Done secondary screening...")
+                                elif 'stage_4' in latest_ckpt:
+                                    progress_bar.progress(65)
+                                    status_container.info("**Stage 4/6:** Done gathering location context...")
+                                elif 'stage_5' in latest_ckpt:
+                                    progress_bar.progress(85)
+                                    status_container.info("**Stage 5/6:** AI evaluation completed...")
+                                    # Show AI model thoughts
+                                    thoughts = get_ai_model_thoughts(user_api_key)
+                                    if thoughts['available'] and thoughts['count'] > last_thought_count:
+                                        last_thought_count = thoughts['count']
+                                        parsed = parse_model_thought(thoughts['latest'])
+                                        if parsed['rationale']:
+                                            eval_icon = "✅" if parsed['evaluation'] == "1" else "❌"
+                                            ai_thoughts_container.caption(f"Evaluated {thoughts['count']} locations... Latest: {eval_icon}")
+                                elif 'stage_6' in latest_ckpt:
+                                    progress_bar.progress(100)
+                                    status_container.success("**Stage 6/6:** Finalizing results...")
+                                    time.sleep(2)
+
+                    except requests.exceptions.RequestException:
+                        pass  # Continue polling even if one request fails
+
+                    time.sleep(10)  # Poll every 2 seconds
+
+                # Wait for thread to complete
+                search_thread.join()
+
+                # Clear progress UI
+                progress_bar.empty()
+                status_container.empty()
+                stage_detail_container.empty()
+                ai_thoughts_container.empty()
+
+                # Get results
+                if search_result_holder['error']:
+                    st.error(f"Search error: {search_result_holder['error']}")
+                    results = None
+                else:
+                    results = search_result_holder['result']
+
+                if results is not None and isinstance(results, pd.DataFrame) and not results.empty:
+                    st.session_state.search_results = results
+                    st.session_state.last_search_params = current_params
+                    st.session_state.search_history.append({
+                        'query': search_prompt,
+                        'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+                        'results_count': len(results)
+                    })
+
+                    # Show search process summary
+                    with st.expander("📊 Search Process Summary", expanded=True):
+                        # Stage 1: Show processed prompt
+                        stage_1_info = get_stage_1_info(user_api_key)
+                        if stage_1_info:
+                            st.markdown("**Stage 1 - Query Processing:**")
+                            if stage_1_info.get('cleaned'):
+                                st.markdown(f"- Original: *{stage_1_info.get('original', search_prompt)}*")
+                                st.markdown(f"- Optimized: *{stage_1_info.get('cleaned')}*")
+                            st.markdown("---")
+
+                        # Stage 2: Show location count
+                        loc_count = get_relevant_location_count(user_api_key)
+                        if loc_count:
+                            st.markdown(f"**Stage 2 - Initial Screening:** {loc_count} candidate locations identified")
+                            st.markdown("---")
+
+                        # Show final progress
+                        final_progress = check_search_progress(user_api_key)
+                        st.markdown(f"**Final Status:** {final_progress['icon']} {final_progress['stage']}")
+
+                    # Show summary of AI evaluations
+                    if 'ai_model_evaluation' in results.columns:
+                        recommended = (results['ai_model_evaluation'] >= 0.5).sum()
+                        not_recommended = len(results) - recommended
+                        st.success(f"✅ Found {len(results)} locations! ({recommended} AI-recommended, {not_recommended} not recommended)")
+
+                        # Show AI evaluation breakdown
+                        with st.expander("🤖 AI Model Evaluation Details", expanded=False):
+                            st.markdown("The AI evaluated each location against your search criteria:")
+                            st.markdown(f"- **Recommended:** {recommended} locations (shown in 🟢 green on map)")
+                            st.markdown(f"- **Not Recommended:** {not_recommended} locations (shown in 🔴 red on map)")
+
+                            if 'ai_model_rationale' in results.columns:
+                                st.markdown("---")
+                                st.markdown("**Sample AI Reasoning:**")
+                                # Show first recommended and first not-recommended rationale
+                                recommended_rows = results[results['ai_model_evaluation'] >= 0.5]
+                                not_recommended_rows = results[results['ai_model_evaluation'] < 0.5]
+
+                                if len(recommended_rows) > 0:
+                                    sample_rationale = recommended_rows.iloc[0].get('ai_model_rationale', '')
+                                    if sample_rationale:
+                                        st.markdown("*✅ Recommended location:*")
+                                        st.caption(sample_rationale[:400] + "..." if len(str(sample_rationale)) > 400 else sample_rationale)
+
+                                if len(not_recommended_rows) > 0:
+                                    sample_rationale = not_recommended_rows.iloc[0].get('ai_model_rationale', '')
+                                    if sample_rationale:
+                                        st.markdown("*❌ Not recommended location:*")
+                                        st.caption(sample_rationale[:400] + "..." if len(str(sample_rationale)) > 400 else sample_rationale)
                     else:
-                        st.warning("No results found for your query.")
+                        st.success(f"✅ Found {len(results)} locations!")
+
+                    st.rerun()
+                else:
+                    st.warning("No results found for your query.")
             else:
                 st.warning("Please enter a search query.")
 
@@ -1320,6 +1754,24 @@ def render_search_tab():
                     map_df = results_df.copy()
                     map_df['score_pct'] = (map_df['search_results'] * 100).round(1).astype(str) + '%'
 
+                    # Color grading based on AI model evaluation
+                    # Green (recommended) = [40, 167, 69, 200], Red (not recommended) = [220, 53, 69, 200]
+                    if 'ai_model_evaluation' in map_df.columns:
+                        def get_color_from_evaluation(eval_score):
+                            if eval_score >= 0.5:
+                                return [40, 167, 69, 200]  # Green - AI recommended
+                            else:
+                                return [220, 53, 69, 200]  # Red - AI not recommended
+
+                        map_df['color'] = map_df['ai_model_evaluation'].apply(get_color_from_evaluation)
+                        map_df['ai_status'] = map_df['ai_model_evaluation'].apply(
+                            lambda x: 'Recommended' if x >= 0.5 else 'Not Recommended'
+                        )
+                    else:
+                        # Fallback to static color if ai_model_evaluation not available
+                        map_df['color'] = [[30, 58, 95, 200]] * len(map_df)
+                        map_df['ai_status'] = 'N/A'
+
                     view_state = pdk.ViewState(
                         latitude=results_df['latitude'].mean(),
                         longitude=results_df['longitude'].mean(),
@@ -1331,8 +1783,8 @@ def render_search_tab():
                         'ScatterplotLayer',
                         data=map_df,
                         get_position='[longitude, latitude]',
-                        get_color='[30, 58, 95, 200]',
-                        get_radius=500,
+                        get_color='color',
+                        get_radius=200,
                         pickable=True,
                         auto_highlight=True
                     )
@@ -1340,7 +1792,7 @@ def render_search_tab():
                     deck = pdk.Deck(
                         layers=[layer],
                         initial_view_state=view_state,
-                        tooltip={"text": "{location_id}\nRelevance: {score_pct}"}
+                        tooltip={"text": "{location_id}\nAI Evaluation: {ai_status}\nRelevance: {score_pct}"}
                     )
 
                     st.pydeck_chart(deck)
@@ -2348,8 +2800,13 @@ def render_object_detection_tab():
                             try:
                                 # Decode base64 image
                                 img_bytes = base64.b64decode(img_data)
-                                img = PILImage.open(BytesIO(img_bytes))
-                                st.image(img, caption="Detected objects with bounding boxes", use_container_width=True)
+                                img = PILImage.open(BytesIO(img_bytes)).resize((512, 512))
+                                with st.container():
+                                    st.image(img,
+                                              caption="Detected objects with bounding boxes",
+                                            #   horizontal_alignment="center",
+                                            #   use_container_width=True
+                                              )
                             except Exception as e:
                                 st.warning(f"Could not display image: {e}")
                         else:
