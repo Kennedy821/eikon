@@ -185,7 +185,7 @@ def get_user_credit_balance(api_key: str) -> Optional[float]:
         return 1000.0
 
     try:
-        base_api_address = 'https://slugai.pagekite.me/check_eikon_api_credits'
+        base_api_address = st.secrets["api"]["check_credits"]
         payload = {"api_key": api_key}
         r = requests.post(base_api_address, json=payload, timeout=10)
         if r.ok:
@@ -225,7 +225,7 @@ def search_locations(
     try:
         # Use the queue endpoint to avoid OOM errors on the server
         # The queue processes requests one at a time
-        base_api_address = 'https://slugai.pagekite.me/eikon_search_agent_api_queue'
+        base_api_address = st.secrets["api"]["search_queue"]
         payload = {
             "prompt": prompt,
             "api_key": api_key,
@@ -657,7 +657,7 @@ def detect_objects_at_location(
         return _generate_mock_object_detection(lat, lon, resolution)
 
     try:
-        base_api_address = 'https://slugai.pagekite.me/get_objects_detected_in_location'
+        base_api_address = st.secrets["api"]["objects_detected"]
         payload = {
             "lat": lat,
             "lon": lon,
@@ -691,7 +691,7 @@ def detect_objects_with_image(
         return _generate_mock_object_detection_with_image(location_id)
 
     try:
-        base_api_address = 'https://slugai.pagekite.me/yolo_object_detection_on_image'
+        base_api_address = st.secrets["api"]["yolo_detection"]
         payload = {
             "location_id": location_id,
             "api_key": api_key
@@ -765,8 +765,9 @@ def send_chat_message(
         return _generate_mock_chat_response(user_message)
 
     try:
-        base_api_address = 'https://slugai.pagekite.me/eikon_ai_chat'
-        # base_api_address = 'https://slugai.pagekite.me/eikon_ai_chat_v2'
+        base_url = st.secrets["api"]["base_url"]
+        queue_submit_url = f'{base_url}/eikon_ai_chat_queue'
+        queue_status_url = f'{base_url}/eikon_ai_chat_queue_status'
 
         # Format the conversation history
         cleaned_user_message = f"USER: {user_message}"
@@ -777,14 +778,48 @@ def send_chat_message(
             "api_key": api_key,
         }
 
-        r = requests.post(base_api_address, json=payload, timeout=1000)
-
-        if r.ok:
-            response_json = r.json()
-            return response_json
-        else:
-            st.error(f"Chat API returned status code: {r.status_code}")
+        # Step 1: Submit to the queue
+        submit_response = requests.post(queue_submit_url, json=payload, timeout=30)
+        if not submit_response.ok:
+            st.error(f"Failed to submit chat request: {submit_response.status_code}")
             return None
+
+        job_id = submit_response.json().get("job_id")
+        if not job_id:
+            st.error("No job_id returned from queue endpoint")
+            return None
+
+        # Step 2: Poll for the result
+        import time as _time
+        max_wait = 900  # 15 minutes max
+        poll_interval = 3  # seconds between polls
+        elapsed = 0
+
+        while elapsed < max_wait:
+            _time.sleep(poll_interval)
+            elapsed += poll_interval
+
+            status_response = requests.get(
+                queue_status_url,
+                params={"job_id": job_id},
+                timeout=30
+            )
+
+            if not status_response.ok and status_response.status_code != 500:
+                st.error(f"Queue status check failed: {status_response.status_code}")
+                return None
+
+            status_data = status_response.json()
+
+            if status_data["status"] == "completed":
+                return status_data["result"]
+            elif status_data["status"] == "failed":
+                st.error(f"Chat processing failed: {status_data.get('error', 'Unknown error')}")
+                return None
+            # else still queued/processing — keep polling
+
+        st.error("Chat request timed out after waiting in queue. Please try again.")
+        return None
     except requests.exceptions.Timeout:
         st.error("Chat request timed out. The server may be busy, please try again.")
         return None
@@ -1602,7 +1637,7 @@ def render_search_tab():
                     # Check progress via the API endpoint
                     try:
                         progress_response = requests.post(
-                            'https://slugai.pagekite.me/check_if_eikon_search_agent_api_job_complete_web',
+                            st.secrets["api"]["check_job_complete"],
                             json={"api_key": user_api_key},
                             timeout=5
                         )
