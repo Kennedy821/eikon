@@ -249,7 +249,7 @@ with tab_reg:
 
 
         email = st.text_input("Email", key="email")
-        if email:
+        if email and len(email)>0:
             if "@" in email:
                 if ".com" in email or ".ac.uk" in email:
                     pass
@@ -258,7 +258,7 @@ with tab_reg:
                 
 
         confirm_email = st.text_input("Confirm Email", key="email_confirm")
-        if email and confirm_email:
+        if email and confirm_email and len(email)>0 and len(confirm_email)>0:
             if email != confirm_email:
                 st.markdown("please make sure your emails match")
 
@@ -267,58 +267,60 @@ with tab_reg:
 
         confirm_password = st.text_input("Confirm Password", type="password", key="confirm_pw")
 
-        if password and confirm_password:
+        if password and confirm_password and len(password)>0 and len(confirm_password)>0:
             if password != confirm_password:
                 st.markdown("please make sure your passwords match!")
 
         account_type = st.selectbox("select what you want to use the account for",["","student","commercial"])
 
-        # Display the payment initiation UI
-        st.write("Subscribe to access eikon API.")
-        if st.button("Register"):
-            with st.spinner("Registering your account..."):
+        if account_type !="":
 
-                time.sleep(3)
-
-                info_placeholder = st.empty()
-
-                # # now check that the user has provided appropriate information to register to eikon
-                # if first_name:
-                #     if last_name:
-                #         if email:
-                #             if confirm_email:
-                #                 if password:
-                #                     if confirm_password:
-                #                         if account_type!="":
-
-                info_placeholder.info("form completed correctly")
-
-                time.sleep(2)
-                info_placeholder.empty()
-                if check_if_user_is_existing_user(email)!="existing_user":
-
-                    # create a user_id
-                    reg_user_id = "eikon_user_"+str(uuid1())
-                    reg_attempt = register_new_user(
-                                    user_id=reg_user_id,
-                                    first_name=first_name,
-                                    last_name=last_name,
-                                    email_address=email,
-                                    password=password,
-                                    account_type=account_type,
-                                    date=formatted_date
-                                    )
-                    # st.write(reg_attempt)
-                                    
-                    # if reg_attempt == "existing_user":
-                    #     info_placeholder.error("It looks like this email address already has an account.")
-                    # else:
-                    info_placeholder.success(f"Successfully registered an account for {first_name}")
-                else:
-                    info_placeholder.error("It looks like this email address already has an account.")
-                
-                
-            st.stop()
+            # Display the payment initiation UI
+            st.write("Subscribe to access eikon API.")
+            if st.button("Register"):
+                with st.spinner("Registering your account..."):
+    
+                    time.sleep(3)
+    
+                    info_placeholder = st.empty()
+    
+                    # # now check that the user has provided appropriate information to register to eikon
+                    # if first_name:
+                    #     if last_name:
+                    #         if email:
+                    #             if confirm_email:
+                    #                 if password:
+                    #                     if confirm_password:
+                    #                         if account_type!="":
+    
+                    info_placeholder.info("form completed correctly")
+    
+                    time.sleep(2)
+                    info_placeholder.empty()
+                    if check_if_user_is_existing_user(email)!="existing_user":
+    
+                        # create a user_id
+                        reg_user_id = "eikon_user_"+str(uuid1())
+                        reg_attempt = register_new_user(
+                                        user_id=reg_user_id,
+                                        first_name=first_name,
+                                        last_name=last_name,
+                                        email_address=email,
+                                        password=password,
+                                        account_type=account_type,
+                                        date=formatted_date
+                                        )
+                        # st.write(reg_attempt)
+                                        
+                        # if reg_attempt == "existing_user":
+                        #     info_placeholder.error("It looks like this email address already has an account.")
+                        # else:
+                        info_placeholder.success(f"Successfully registered an account for {first_name}")
+                    else:
+                        info_placeholder.error("It looks like this email address already has an account.")
+                    
+                    
+                st.stop()
 # ── CATALOG ───────────────────────────────────────────────────────────────────
 with tab_catalog:
     st.subheader("Browse datasets")
