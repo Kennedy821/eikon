@@ -802,7 +802,7 @@ def send_chat_message(
             status_response = requests.get(
                 queue_status_url,
                 params={"job_id": job_id},
-                timeout=30
+                timeout=120
             )
 
             if not status_response.ok and status_response.status_code != 500:
