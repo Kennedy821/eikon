@@ -1558,9 +1558,9 @@ def render_location_cards(results_df: pd.DataFrame):
             if ai_eval is not None:
                 st.markdown("**AI Evaluation**")
                 if ai_eval == 1:
-                    st.success("✅ Recommended")
+                    st.success("Recommended")
                 else:
-                    st.warning("⚠️ Review Suggested")
+                    st.warning("Review Suggested")
 
         with detail_col2:
             # Objects Detected
@@ -1589,7 +1589,7 @@ def render_location_cards(results_df: pd.DataFrame):
         # AI Rationale Section
         ai_rationale = current_loc.get('ai_rationale', None)
         if ai_rationale:
-            with st.expander("🧠 AI Analysis & Rationale", expanded=False):
+            with st.expander("AI Analysis & Rationale", expanded=False):
                 st.write(ai_rationale)
 
         # Quick Actions
@@ -1639,6 +1639,408 @@ def render_search_tab():
         st.session_state.last_search_params = None
     if 'search_spatial_resolution' not in st.session_state:
         st.session_state.search_spatial_resolution = "London - all"
+    if 'search_active' not in st.session_state:
+        st.session_state.search_active = False
+    if 'search_params' not in st.session_state:
+        st.session_state.search_params = None
+    if 'search_prompt_text' not in st.session_state:
+        st.session_state.search_prompt_text = ""
+    if 'search_thread' not in st.session_state:
+        st.session_state.search_thread = None
+    if 'search_result_holder' not in st.session_state:
+        st.session_state.search_result_holder = None
+    if 'search_poll_delay_until' not in st.session_state:
+        st.session_state.search_poll_delay_until = None
+    if 'search_last_thought_count' not in st.session_state:
+        st.session_state.search_last_thought_count = 0
+    if 'search_progress_value' not in st.session_state:
+        st.session_state.search_progress_value = 0
+    if 'search_status_message' not in st.session_state:
+        st.session_state.search_status_message = "**Stage 0/6:** Warming up search agents..."
+    if 'search_status_level' not in st.session_state:
+        st.session_state.search_status_level = "info"
+    if 'search_stage_key' not in st.session_state:
+        st.session_state.search_stage_key = "stage_0"
+    if 'search_stage_extra' not in st.session_state:
+        st.session_state.search_stage_extra = None
+    if 'search_ai_caption' not in st.session_state:
+        st.session_state.search_ai_caption = None
+
+    INITIAL_PROGRESS_POLL_DELAY = 30  # seconds
+    PROGRESS_POLL_INTERVAL = 10  # seconds
+
+    def _start_search_job(search_prompt: str, effort_level: str, spatial_resolution: str, selected_borough: Optional[str]):
+        """Kick off a backend search while caching state for reruns."""
+        api_key = st.session_state.get("api_key")
+        if not api_key:
+            st.error("API key missing. Please sign in before running a search.")
+            return
+
+        if st.session_state.search_active:
+            thread = st.session_state.search_thread
+            holder = st.session_state.search_result_holder
+            if thread and holder and not holder.get('done'):
+                st.warning("A search is already running. Please wait for it to finish.")
+                return
+
+        current_params = {
+            'prompt': search_prompt,
+            'effort': effort_level,
+            'resolution': spatial_resolution,
+            'borough': selected_borough
+        }
+
+        st.session_state.search_active = True
+        st.session_state.search_params = current_params
+        st.session_state.search_prompt_text = search_prompt
+        st.session_state.search_progress_value = 5
+        st.session_state.search_status_message = "**Stage 0/6:** Warming up search agents..."
+        st.session_state.search_status_level = "info"
+        st.session_state.search_stage_key = "stage_0"
+        st.session_state.search_stage_extra = None
+        st.session_state.search_ai_caption = None
+        st.session_state.search_poll_delay_until = time.time() + INITIAL_PROGRESS_POLL_DELAY
+        st.session_state.search_last_thought_count = 0
+
+        search_result_holder = {'result': None, 'error': None, 'done': False}
+        st.session_state.search_result_holder = search_result_holder
+
+        import threading
+
+        def run_search_thread():
+            try:
+                search_result_holder['result'] = search_locations(
+                    prompt=search_prompt,
+                    api_key=api_key,
+                    effort=effort_level,
+                    spatial_resolution=spatial_resolution,
+                    borough=selected_borough
+                )
+            except Exception as e:
+                search_result_holder['error'] = str(e)
+            finally:
+                search_result_holder['done'] = True
+
+        search_thread = threading.Thread(target=run_search_thread, daemon=True)
+        search_thread.start()
+        st.session_state.search_thread = search_thread
+
+    def _render_status(status_container, message: str, level: str):
+        """Render the current status message with appropriate styling."""
+        level = level or "info"
+        if level == "success":
+            status_container.success(message)
+        elif level == "warning":
+            status_container.warning(message)
+        elif level == "error":
+            status_container.error(message)
+        else:
+            status_container.info(message)
+
+    def _render_stage_caption(container, stage_key: str, extra: Optional[str] = None):
+        """Render the contextual caption for the current stage."""
+        base_message = STAGE_DETAIL_MESSAGES.get(stage_key, STAGE_DETAIL_MESSAGES["stage_0"])
+        caption_text = f"{base_message} {extra}".strip() if extra else base_message
+        container.caption(caption_text)
+
+    def _apply_stage_update(progress_bar, status_container, stage_detail_container, ai_container,
+                            progress_value: int, status_level: str, status_message: str,
+                            stage_key: str, stage_extra: Optional[str] = None,
+                            ai_caption: Optional[str] = None):
+        """Update UI containers and persist the latest stage state."""
+        progress_bar.progress(progress_value)
+        _render_status(status_container, status_message, status_level)
+        _render_stage_caption(stage_detail_container, stage_key, stage_extra)
+
+        if ai_caption:
+            ai_container.caption(ai_caption)
+        else:
+            ai_container.empty()
+
+        st.session_state.search_progress_value = progress_value
+        st.session_state.search_status_message = status_message
+        st.session_state.search_status_level = status_level
+        st.session_state.search_stage_key = stage_key
+        st.session_state.search_stage_extra = stage_extra
+        st.session_state.search_ai_caption = ai_caption
+
+    def _process_finished_search(search_result_holder):
+        """Handle completion of a search thread and update session results."""
+        st.session_state.search_active = False
+        st.session_state.search_thread = None
+        st.session_state.search_poll_delay_until = None
+
+        if search_result_holder['error']:
+            st.error(f"Search error: {search_result_holder['error']}")
+            st.session_state.search_result_holder = None
+            return
+
+        results = search_result_holder['result']
+        st.session_state.search_result_holder = None
+
+        if results is not None and isinstance(results, pd.DataFrame) and not results.empty:
+            st.session_state.search_results = results
+            st.session_state.last_search_params = st.session_state.search_params
+            st.session_state.search_history.append({
+                'query': st.session_state.search_prompt_text,
+                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+                'results_count': len(results)
+            })
+        else:
+            st.warning("No results found for your query.")
+
+    def _render_search_summary():
+        """Show a summary of the last completed search."""
+        results = st.session_state.search_results
+        if results is None or not isinstance(results, pd.DataFrame) or results.empty:
+            return
+
+        user_api_key = st.session_state.get("api_key")
+        if not user_api_key:
+            st.warning("Sign in again to see detailed search context.")
+            return
+        search_prompt = st.session_state.search_prompt_text or ""
+        if not search_prompt and st.session_state.last_search_params:
+            search_prompt = st.session_state.last_search_params.get('prompt', "")
+
+        st.success(f"Found {len(results)} locations!")
+
+        with st.expander("Search Process Summary", expanded=True):
+            stage_1_info = get_stage_1_info(user_api_key)
+            if stage_1_info:
+                st.markdown("**Stage 1 - Query Processing:**")
+                if stage_1_info.get('cleaned'):
+                    st.markdown(f"- Original: *{stage_1_info.get('original', search_prompt)}*")
+                    st.markdown(f"- Optimized: *{stage_1_info.get('cleaned')}*")
+                st.markdown("---")
+
+            final_progress = check_search_progress(user_api_key)
+            st.markdown(f"**Final Status:** {final_progress['stage']}")
+
+        if 'ai_model_evaluation' in results.columns:
+            recommended = (results['ai_model_evaluation'] >= 0.5).sum()
+            not_recommended = len(results) - recommended
+            st.markdown("### AI Model Evaluation Details")
+            st.markdown(f"- **Recommended:** {recommended} locations (shown in green on map)")
+            st.markdown(f"- **Not Recommended:** {not_recommended} locations (shown in red on map)")
+
+            if 'ai_model_rationale' in results.columns:
+                st.markdown("---")
+                st.markdown("**Sample AI Reasoning:**")
+                recommended_rows = results[results['ai_model_evaluation'] >= 0.5]
+                not_recommended_rows = results[results['ai_model_evaluation'] < 0.5]
+
+                if len(recommended_rows) > 0:
+                    sample_rationale = recommended_rows.iloc[0].get('ai_model_rationale', '')
+                    if sample_rationale:
+                        st.markdown("* Recommended location:*")
+                        st.caption(sample_rationale[:400] + "..." if len(str(sample_rationale)) > 400 else sample_rationale)
+
+                if len(not_recommended_rows) > 0:
+                    sample_rationale = not_recommended_rows.iloc[0].get('ai_model_rationale', '')
+                    if sample_rationale:
+                        st.markdown("* Not recommended location:*")
+                        st.caption(sample_rationale[:400] + "..." if len(str(sample_rationale)) > 400 else sample_rationale)
+
+    def _run_search_progress_ui():
+        """Display and update the search progress UI, resuming state after reruns."""
+        if not st.session_state.search_active or not st.session_state.search_result_holder:
+            return
+
+        api_key = st.session_state.get("api_key")
+        if not api_key:
+            st.error("API key missing. Please sign in again to resume your search.")
+            st.session_state.search_active = False
+            return
+
+        search_prompt = st.session_state.search_prompt_text
+        params = st.session_state.search_params or {}
+        effort_level = params.get('effort', 'test')
+
+        st.markdown("### Search in Progress")
+        st.markdown(f"**Query:** {search_prompt}")
+        st.markdown(f"**Effort Level:** {effort_level}")
+
+        progress_bar = st.progress(st.session_state.search_progress_value)
+        status_container = st.empty()
+        stage_detail_container = st.empty()
+        ai_thoughts_container = st.empty()
+
+        # Render last known status immediately
+        _apply_stage_update(
+            progress_bar,
+            status_container,
+            stage_detail_container,
+            ai_thoughts_container,
+            st.session_state.search_progress_value,
+            st.session_state.search_status_level,
+            st.session_state.search_status_message,
+            st.session_state.search_stage_key,
+            st.session_state.search_stage_extra,
+            st.session_state.search_ai_caption
+        )
+
+        search_result_holder = st.session_state.search_result_holder
+        poll_delay_until = st.session_state.search_poll_delay_until
+        last_thought_count = st.session_state.search_last_thought_count
+
+        while not search_result_holder['done']:
+            if poll_delay_until and time.time() < poll_delay_until:
+                _apply_stage_update(
+                    progress_bar,
+                    status_container,
+                    stage_detail_container,
+                    ai_thoughts_container,
+                    5,
+                    "info",
+                    "**Stage 0/6:** Warming up search agents...",
+                    "stage_0"
+                )
+                time.sleep(1)
+                continue
+
+            poll_delay_until = None
+            st.session_state.search_poll_delay_until = None
+
+            try:
+                progress_response = requests.post(
+                    EIKON_API_ENDPOINTS["check_job_complete"],
+                    json={"api_key": api_key},
+                    timeout=5
+                )
+            except requests.exceptions.RequestException:
+                time.sleep(5)
+                continue
+
+            if progress_response.ok:
+                progress_data = progress_response.json()
+                latest_ckpt = progress_data.get('latest_ckpt', '') or ''
+                handled_stage = False
+
+                if 'stage_6' in latest_ckpt:
+                    _apply_stage_update(
+                        progress_bar,
+                        status_container,
+                        stage_detail_container,
+                        ai_thoughts_container,
+                        100,
+                        "success",
+                        "**Stage 6/6:** Finalizing results...",
+                        "stage_6"
+                    )
+                    handled_stage = True
+                elif 'stage_5' in latest_ckpt:
+                    thoughts = get_ai_model_thoughts(api_key)
+                    ai_caption = None
+                    if thoughts['available'] and thoughts['count'] > last_thought_count:
+                        last_thought_count = thoughts['count']
+                        parsed = parse_model_thought(thoughts['latest'])
+                        if parsed['rationale']:
+                            eval_icon = "✅" if parsed['evaluation'] == "1" else "❌"
+                            ai_caption = f"Evaluated {thoughts['count']} locations... Latest: {eval_icon}"
+                    _apply_stage_update(
+                        progress_bar,
+                        status_container,
+                        stage_detail_container,
+                        ai_thoughts_container,
+                        85,
+                        "info",
+                        "**Stage 5/6:** AI evaluation completed...",
+                        "stage_5",
+                        ai_caption=ai_caption
+                    )
+                    handled_stage = True
+                elif 'stage_4' in latest_ckpt:
+                    _apply_stage_update(
+                        progress_bar,
+                        status_container,
+                        stage_detail_container,
+                        ai_thoughts_container,
+                        65,
+                        "info",
+                        "**Stage 4/6:** Done gathering location context...",
+                        "stage_4"
+                    )
+                    handled_stage = True
+                elif 'stage_3' in latest_ckpt:
+                    _apply_stage_update(
+                        progress_bar,
+                        status_container,
+                        stage_detail_container,
+                        ai_thoughts_container,
+                        50,
+                        "info",
+                        "**Stage 3/6:** Done secondary screening...",
+                        "stage_3"
+                    )
+                    handled_stage = True
+                elif 'stage_2' in latest_ckpt:
+                    loc_count = get_relevant_location_count(api_key)
+                    extra_caption = f"({loc_count} candidate locations under review)" if loc_count else None
+                    _apply_stage_update(
+                        progress_bar,
+                        status_container,
+                        stage_detail_container,
+                        ai_thoughts_container,
+                        30,
+                        "info",
+                        "**Stage 2/6:** Done initial screening of locations...",
+                        "stage_2",
+                        stage_extra=extra_caption
+                    )
+                    handled_stage = True
+                elif 'stage_1' in latest_ckpt:
+                    _apply_stage_update(
+                        progress_bar,
+                        status_container,
+                        stage_detail_container,
+                        ai_thoughts_container,
+                        15,
+                        "info",
+                        "**Stage 1/6:** Done processing your search query...",
+                        "stage_1"
+                    )
+                    handled_stage = True
+
+                if not handled_stage:
+                    if progress_data.get('job_complete'):
+                        _apply_stage_update(
+                            progress_bar,
+                            status_container,
+                            stage_detail_container,
+                            ai_thoughts_container,
+                            100,
+                            "success",
+                            "**Search Complete!**",
+                            "stage_6"
+                        )
+                    else:
+                        _apply_stage_update(
+                            progress_bar,
+                            status_container,
+                            stage_detail_container,
+                            ai_thoughts_container,
+                            5,
+                            "info",
+                            "**Stage 0/6:** Warming up search agents...",
+                            "stage_0"
+                        )
+
+            st.session_state.search_last_thought_count = last_thought_count
+            time.sleep(PROGRESS_POLL_INTERVAL)
+
+        # Wait for completion and process results
+        thread = st.session_state.search_thread
+        if thread:
+            thread.join()
+
+        progress_bar.empty()
+        status_container.empty()
+        stage_detail_container.empty()
+        ai_thoughts_container.empty()
+
+        _process_finished_search(search_result_holder)
+
 
     col1, col2 = st.columns([1, 2])
 
@@ -1684,233 +2086,19 @@ def render_search_tab():
         # Only execute search when form is submitted
         if search_button:
             if search_prompt:
-                # Create a hash of search params to detect if it's a new search
-                current_params = {
-                    'prompt': search_prompt,
-                    'effort': effort_level,
-                    'resolution': spatial_resolution,
-                    'borough': selected_borough
-                }
-
-                user_api_key = st.session_state.api_key
-
-                # Show search progress UI
-                st.markdown("### Search in Progress")
-                st.markdown(f"**Query:** {search_prompt}")
-                st.markdown(f"**Effort Level:** {effort_level}")
-
-                # Create UI containers for live updates
-                progress_bar = st.progress(0)
-                status_container = st.empty()
-                stage_detail_container = st.empty()
-                ai_thoughts_container = st.empty()
-
-                def update_stage_detail(stage_key: str, extra: Optional[str] = None):
-                    base_message = STAGE_DETAIL_MESSAGES.get(stage_key, STAGE_DETAIL_MESSAGES["stage_0"])
-                    if extra:
-                        stage_detail_container.caption(f"{base_message} {extra}".strip())
-                    else:
-                        stage_detail_container.caption(base_message)
-
-                # Default stage-0 messaging so users see immediate feedback
-                status_container.info("**Stage 0/6:** Warming up search agents...")
-                update_stage_detail("stage_0")
-
-                # Start the search API call in a background thread
-                import threading
-                search_result_holder = {'result': None, 'error': None, 'done': False}
-
-                def run_search_thread():
-                    try:
-                        search_result_holder['result'] = search_locations(
-                            prompt=search_prompt,
-                            api_key=user_api_key,
-                            effort=effort_level,
-                            spatial_resolution=spatial_resolution,
-                            borough=selected_borough
-                        )
-                    except Exception as e:
-                        search_result_holder['error'] = str(e)
-                    finally:
-                        search_result_holder['done'] = True
-
-                search_thread = threading.Thread(target=run_search_thread)
-                search_thread.start()
-
-                # Give backend a moment to clear stale stage files before first poll
-                INITIAL_PROGRESS_POLL_DELAY = 10  # seconds
-                poll_delay_until = time.time() + INITIAL_PROGRESS_POLL_DELAY
-
-                # Poll for progress while search is running
-                last_stage = None
-                last_thought_count = 0
-
-                while not search_result_holder['done']:
-                    # Respect initial delay so backend can finish housekeeping
-                    if poll_delay_until and time.time() < poll_delay_until:
-                        progress_bar.progress(5)
-                        status_container.info("**Stage 0/6:** Warming up search agents...")
-                        update_stage_detail("stage_0")
-                        time.sleep(1)
-                        continue
-                    poll_delay_until = None
-
-                    # Check progress via the API endpoint
-                    try:
-                        progress_response = requests.post(
-                            EIKON_API_ENDPOINTS["check_job_complete"],
-                            json={"api_key": user_api_key},
-                            timeout=5
-                        )
-                        if progress_response.ok:
-                            progress_data = progress_response.json()
-                            latest_ckpt = progress_data.get('latest_ckpt', '') or ''
-                            handled_stage = False
-
-                            # Update UI based on checkpoint
-                            if 'stage_6' in latest_ckpt:
-                                progress_bar.progress(100)
-                                status_container.success("**Stage 6/6:** Finalizing results...")
-                                update_stage_detail("stage_6")
-                                handled_stage = True
-                            elif 'stage_5' in latest_ckpt:
-                                progress_bar.progress(85)
-                                status_container.info("**Stage 5/6:** AI evaluation completed...")
-                                thoughts = get_ai_model_thoughts(user_api_key)
-                                if thoughts['available'] and thoughts['count'] > last_thought_count:
-                                    last_thought_count = thoughts['count']
-                                    parsed = parse_model_thought(thoughts['latest'])
-                                    if parsed['rationale']:
-                                        eval_icon = "✅" if parsed['evaluation'] == "1" else "❌"
-                                        ai_thoughts_container.caption(f"Evaluated {thoughts['count']} locations... Latest: {eval_icon}")
-                                handled_stage = True
-                                update_stage_detail("stage_5")
-                            elif 'stage_4' in latest_ckpt:
-                                progress_bar.progress(65)
-                                status_container.info("**Stage 4/6:** Done gathering location context...")
-                                update_stage_detail("stage_4")
-                                handled_stage = True
-                            elif 'stage_3' in latest_ckpt:
-                                progress_bar.progress(50)
-                                status_container.info("**Stage 3/6:** Done secondary screening...")
-                                update_stage_detail("stage_3")
-                                handled_stage = True
-                            elif 'stage_2' in latest_ckpt:
-                                progress_bar.progress(30)
-                                status_container.info("**Stage 2/6:** Done initial screening of locations...")
-                                loc_count = get_relevant_location_count(user_api_key)
-                                if loc_count:
-                                    update_stage_detail("stage_2", f"({loc_count} candidate locations under review)")
-                                else:
-                                    update_stage_detail("stage_2")
-                                handled_stage = True
-                            elif 'stage_1' in latest_ckpt:
-                                progress_bar.progress(15)
-                                status_container.info("**Stage 1/6:** Done processing your search query...")
-                                update_stage_detail("stage_1")
-                                handled_stage = True
-
-                            if not handled_stage:
-                                if progress_data.get('job_complete'):
-                                    progress_bar.progress(100)
-                                    status_container.success("**Search Complete!**")
-                                    update_stage_detail("stage_6")
-                                else:
-                                    progress_bar.progress(5)
-                                    status_container.info("**Stage 0/6:** Warming up search agents...")
-                                    update_stage_detail("stage_0")
-
-                    except requests.exceptions.RequestException:
-                        pass  # Continue polling even if one request fails
-
-                    time.sleep(10)  # Poll every 2 seconds
-
-                # Wait for thread to complete
-                search_thread.join()
-
-                # Clear progress UI
-                progress_bar.empty()
-                status_container.empty()
-                stage_detail_container.empty()
-                ai_thoughts_container.empty()
-
-                # Get results
-                if search_result_holder['error']:
-                    st.error(f"Search error: {search_result_holder['error']}")
-                    results = None
-                else:
-                    results = search_result_holder['result']
-
-                if results is not None and isinstance(results, pd.DataFrame) and not results.empty:
-                    st.session_state.search_results = results
-                    st.session_state.last_search_params = current_params
-                    st.session_state.search_history.append({
-                        'query': search_prompt,
-                        'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
-                        'results_count': len(results)
-                    })
-
-                    # Show search process summary
-                    with st.expander("📊 Search Process Summary", expanded=True):
-                        # Stage 1: Show processed prompt
-                        stage_1_info = get_stage_1_info(user_api_key)
-                        if stage_1_info:
-                            st.markdown("**Stage 1 - Query Processing:**")
-                            if stage_1_info.get('cleaned'):
-                                st.markdown(f"- Original: *{stage_1_info.get('original', search_prompt)}*")
-                                st.markdown(f"- Optimized: *{stage_1_info.get('cleaned')}*")
-                            st.markdown("---")
-                        # try:
-                        #     # Stage 2: Show location count
-                        #     loc_count = get_relevant_location_count(user_api_key)
-                        #     if loc_count:
-                        #         st.markdown(f"**Stage 2 - Initial Screening:** {loc_count} candidate locations identified")
-                        #         st.markdown("---")
-                        # except Exception as e:
-                        #     pass
-
-                        # Show final progress
-                        final_progress = check_search_progress(user_api_key)
-                        st.markdown(f"**Final Status:** {final_progress['icon']} {final_progress['stage']}")
-
-                    # Show summary of AI evaluations
-                    if 'ai_model_evaluation' in results.columns:
-                        recommended = (results['ai_model_evaluation'] >= 0.5).sum()
-                        not_recommended = len(results) - recommended
-                        st.success(f"✅ Found {len(results)} locations! ({recommended} AI-recommended, {not_recommended} not recommended)")
-
-                        # Show AI evaluation breakdown
-                        with st.expander("🤖 AI Model Evaluation Details", expanded=False):
-                            st.markdown("The AI evaluated each location against your search criteria:")
-                            st.markdown(f"- **Recommended:** {recommended} locations (shown in 🟢 green on map)")
-                            st.markdown(f"- **Not Recommended:** {not_recommended} locations (shown in 🔴 red on map)")
-
-                            if 'ai_model_rationale' in results.columns:
-                                st.markdown("---")
-                                st.markdown("**Sample AI Reasoning:**")
-                                # Show first recommended and first not-recommended rationale
-                                recommended_rows = results[results['ai_model_evaluation'] >= 0.5]
-                                not_recommended_rows = results[results['ai_model_evaluation'] < 0.5]
-
-                                if len(recommended_rows) > 0:
-                                    sample_rationale = recommended_rows.iloc[0].get('ai_model_rationale', '')
-                                    if sample_rationale:
-                                        st.markdown("*✅ Recommended location:*")
-                                        st.caption(sample_rationale[:400] + "..." if len(str(sample_rationale)) > 400 else sample_rationale)
-
-                                if len(not_recommended_rows) > 0:
-                                    sample_rationale = not_recommended_rows.iloc[0].get('ai_model_rationale', '')
-                                    if sample_rationale:
-                                        st.markdown("*❌ Not recommended location:*")
-                                        st.caption(sample_rationale[:400] + "..." if len(str(sample_rationale)) > 400 else sample_rationale)
-                    else:
-                        st.success(f"✅ Found {len(results)} locations!")
-
-                    st.rerun()
-                else:
-                    st.warning("No results found for your query.")
+                _start_search_job(
+                    search_prompt=search_prompt,
+                    effort_level=effort_level,
+                    spatial_resolution=spatial_resolution,
+                    selected_borough=selected_borough
+                )
             else:
                 st.warning("Please enter a search query.")
+
+        if st.session_state.search_active:
+            _run_search_progress_ui()
+        elif st.session_state.search_results is not None:
+            _render_search_summary()
 
     with col2:
         st.subheader("Results")
