@@ -331,6 +331,16 @@ SEARCH_STAGES = {
     }
 }
 
+STAGE_DETAIL_MESSAGES = {
+    "stage_0": "Initializing pipelines and reserving compute...",
+    "stage_1": "Translating your query into agent-ready instructions...",
+    "stage_2": "Sweeping the area of interest for candidate locations...",
+    "stage_3": "Applying advanced filters to shortlist promising sites...",
+    "stage_4": "Collecting imagery and contextual intel on each site...",
+    "stage_5": "AI evaluators scoring every candidate against your brief...",
+    "stage_6": "Packaging final recommendations and visualizations..."
+}
+
 
 def get_search_progress_dir(api_key: str) -> str:
     """Get the progress directory path for a user's search job."""
@@ -520,8 +530,14 @@ def get_relevant_location_count(api_key: str) -> Optional[int]:
     import os
 
     progress_dir = get_search_progress_dir(api_key)
-    file_for_consideration = sorted([x for x in os.listdir(progress_dir) if x.startswith("stage_")])[-1]
-    stage_file = os.path.join(progress_dir,file_for_consideration)
+    if not os.path.isdir(progress_dir):
+        return None
+
+    stage_files = sorted([x for x in os.listdir(progress_dir) if x.startswith("stage_")])
+    if not stage_files:
+        return None
+
+    stage_file = os.path.join(progress_dir, stage_files[-1])
 
     if os.path.exists(stage_file):
         try:
@@ -1689,6 +1705,17 @@ def render_search_tab():
                 stage_detail_container = st.empty()
                 ai_thoughts_container = st.empty()
 
+                def update_stage_detail(stage_key: str, extra: Optional[str] = None):
+                    base_message = STAGE_DETAIL_MESSAGES.get(stage_key, STAGE_DETAIL_MESSAGES["stage_0"])
+                    if extra:
+                        stage_detail_container.caption(f"{base_message} {extra}".strip())
+                    else:
+                        stage_detail_container.caption(base_message)
+
+                # Default stage-0 messaging so users see immediate feedback
+                status_container.info("**Stage 0/6:** Warming up search agents...")
+                update_stage_detail("stage_0")
+
                 # Start the search API call in a background thread
                 import threading
                 search_result_holder = {'result': None, 'error': None, 'done': False}
@@ -1710,11 +1737,24 @@ def render_search_tab():
                 search_thread = threading.Thread(target=run_search_thread)
                 search_thread.start()
 
+                # Give backend a moment to clear stale stage files before first poll
+                INITIAL_PROGRESS_POLL_DELAY = 10  # seconds
+                poll_delay_until = time.time() + INITIAL_PROGRESS_POLL_DELAY
+
                 # Poll for progress while search is running
                 last_stage = None
                 last_thought_count = 0
 
                 while not search_result_holder['done']:
+                    # Respect initial delay so backend can finish housekeeping
+                    if poll_delay_until and time.time() < poll_delay_until:
+                        progress_bar.progress(5)
+                        status_container.info("**Stage 0/6:** Warming up search agents...")
+                        update_stage_detail("stage_0")
+                        time.sleep(1)
+                        continue
+                    poll_delay_until = None
+
                     # Check progress via the API endpoint
                     try:
                         progress_response = requests.post(
@@ -1724,45 +1764,61 @@ def render_search_tab():
                         )
                         if progress_response.ok:
                             progress_data = progress_response.json()
+                            latest_ckpt = progress_data.get('latest_ckpt', '') or ''
+                            handled_stage = False
 
-                            if progress_data.get('job_complete'):
+                            # Update UI based on checkpoint
+                            if 'stage_6' in latest_ckpt:
                                 progress_bar.progress(100)
-                                status_container.success("**Search Complete!**")
-                            else:
-                                latest_ckpt = progress_data.get('latest_ckpt', '')
+                                status_container.success("**Stage 6/6:** Finalizing results...")
+                                update_stage_detail("stage_6")
+                                handled_stage = True
+                            elif 'stage_5' in latest_ckpt:
+                                progress_bar.progress(85)
+                                status_container.info("**Stage 5/6:** AI evaluation completed...")
+                                thoughts = get_ai_model_thoughts(user_api_key)
+                                if thoughts['available'] and thoughts['count'] > last_thought_count:
+                                    last_thought_count = thoughts['count']
+                                    parsed = parse_model_thought(thoughts['latest'])
+                                    if parsed['rationale']:
+                                        eval_icon = "✅" if parsed['evaluation'] == "1" else "❌"
+                                        ai_thoughts_container.caption(f"Evaluated {thoughts['count']} locations... Latest: {eval_icon}")
+                                handled_stage = True
+                                update_stage_detail("stage_5")
+                            elif 'stage_4' in latest_ckpt:
+                                progress_bar.progress(65)
+                                status_container.info("**Stage 4/6:** Done gathering location context...")
+                                update_stage_detail("stage_4")
+                                handled_stage = True
+                            elif 'stage_3' in latest_ckpt:
+                                progress_bar.progress(50)
+                                status_container.info("**Stage 3/6:** Done secondary screening...")
+                                update_stage_detail("stage_3")
+                                handled_stage = True
+                            elif 'stage_2' in latest_ckpt:
+                                progress_bar.progress(30)
+                                status_container.info("**Stage 2/6:** Done initial screening of locations...")
+                                loc_count = get_relevant_location_count(user_api_key)
+                                if loc_count:
+                                    update_stage_detail("stage_2", f"({loc_count} candidate locations under review)")
+                                else:
+                                    update_stage_detail("stage_2")
+                                handled_stage = True
+                            elif 'stage_1' in latest_ckpt:
+                                progress_bar.progress(15)
+                                status_container.info("**Stage 1/6:** Done processing your search query...")
+                                update_stage_detail("stage_1")
+                                handled_stage = True
 
-                                # Update UI based on checkpoint
-                                if 'stage_1' in latest_ckpt:
-                                    progress_bar.progress(15)
-                                    status_container.info("**Stage 1/6:** Done processing your search query...")
-                                elif 'stage_2' in latest_ckpt:
-                                    progress_bar.progress(30)
-                                    status_container.info("**Stage 2/6:** Done initial screening of locations...")
-                                    # Show location count
-                                    loc_count = get_relevant_location_count(user_api_key)
-                                    if loc_count:
-                                        stage_detail_container.caption(f"Scanning {loc_count} candidate locations...")
-                                elif 'stage_3' in latest_ckpt:
-                                    progress_bar.progress(50)
-                                    status_container.info("**Stage 3/6:** Done secondary screening...")
-                                elif 'stage_4' in latest_ckpt:
-                                    progress_bar.progress(65)
-                                    status_container.info("**Stage 4/6:** Done gathering location context...")
-                                elif 'stage_5' in latest_ckpt:
-                                    progress_bar.progress(85)
-                                    status_container.info("**Stage 5/6:** AI evaluation completed...")
-                                    # Show AI model thoughts
-                                    thoughts = get_ai_model_thoughts(user_api_key)
-                                    if thoughts['available'] and thoughts['count'] > last_thought_count:
-                                        last_thought_count = thoughts['count']
-                                        parsed = parse_model_thought(thoughts['latest'])
-                                        if parsed['rationale']:
-                                            eval_icon = "✅" if parsed['evaluation'] == "1" else "❌"
-                                            ai_thoughts_container.caption(f"Evaluated {thoughts['count']} locations... Latest: {eval_icon}")
-                                elif 'stage_6' in latest_ckpt:
+                            if not handled_stage:
+                                if progress_data.get('job_complete'):
                                     progress_bar.progress(100)
-                                    status_container.success("**Stage 6/6:** Finalizing results...")
-                                    time.sleep(2)
+                                    status_container.success("**Search Complete!**")
+                                    update_stage_detail("stage_6")
+                                else:
+                                    progress_bar.progress(5)
+                                    status_container.info("**Stage 0/6:** Warming up search agents...")
+                                    update_stage_detail("stage_0")
 
                     except requests.exceptions.RequestException:
                         pass  # Continue polling even if one request fails
@@ -1804,12 +1860,14 @@ def render_search_tab():
                                 st.markdown(f"- Original: *{stage_1_info.get('original', search_prompt)}*")
                                 st.markdown(f"- Optimized: *{stage_1_info.get('cleaned')}*")
                             st.markdown("---")
-
-                        # Stage 2: Show location count
-                        loc_count = get_relevant_location_count(user_api_key)
-                        if loc_count:
-                            st.markdown(f"**Stage 2 - Initial Screening:** {loc_count} candidate locations identified")
-                            st.markdown("---")
+                        # try:
+                        #     # Stage 2: Show location count
+                        #     loc_count = get_relevant_location_count(user_api_key)
+                        #     if loc_count:
+                        #         st.markdown(f"**Stage 2 - Initial Screening:** {loc_count} candidate locations identified")
+                        #         st.markdown("---")
+                        # except Exception as e:
+                        #     pass
 
                         # Show final progress
                         final_progress = check_search_progress(user_api_key)
