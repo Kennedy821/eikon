@@ -40,6 +40,17 @@ except ImportError:
 import PIL.Image as Image
 im = Image.open('eikon_logo_tes_v4.png')
 
+# API endpoints
+EIKON_API_BASE_URL = "https://slugai.pagekite.me"
+EIKON_API_ENDPOINTS = {
+    "base_url": EIKON_API_BASE_URL,
+    "check_credits": f"{EIKON_API_BASE_URL}/check_eikon_api_credits",
+    "search_queue": f"{EIKON_API_BASE_URL}/eikon_search_agent_api_queue",
+    "objects_detected": f"{EIKON_API_BASE_URL}/get_objects_detected_in_location",
+    "yolo_detection": f"{EIKON_API_BASE_URL}/yolo_object_detection_on_image",
+    "check_job_complete": f"{EIKON_API_BASE_URL}/check_if_eikon_search_agent_api_job_complete_web",
+}
+
 # Page configuration
 st.set_page_config(
     page_title="EIKON",
@@ -134,6 +145,8 @@ def init_session_state():
         'chat_messages': [],  # List of {"role": "user"|"assistant", "content": str, "images": [base64_str]}
         'chat_model_cot': [],  # Model's chain of thought history
         'chat_conversation': [],  # Conversation history for API
+        'eikon_pending_request': None,  # Pending API request dict (set during thinking state)
+        'previous_search_results': None,  # Cached previous search results from API
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -185,7 +198,7 @@ def get_user_credit_balance(api_key: str) -> Optional[float]:
         return 1000.0
 
     try:
-        base_api_address = st.secrets["api"]["check_credits"]
+        base_api_address = EIKON_API_ENDPOINTS["check_credits"]
         payload = {"api_key": api_key}
         r = requests.post(base_api_address, json=payload, timeout=10)
         if r.ok:
@@ -225,7 +238,7 @@ def search_locations(
     try:
         # Use the queue endpoint to avoid OOM errors on the server
         # The queue processes requests one at a time
-        base_api_address = st.secrets["api"]["search_queue"]
+        base_api_address = EIKON_API_ENDPOINTS["search_queue"]
         payload = {
             "prompt": prompt,
             "api_key": api_key,
@@ -595,6 +608,74 @@ def calculate_visual_similarity(
         return None
 
 
+def calculate_descriptive_similarity(
+    location_1: List[float],
+    location_2: List[float],
+    resolution: str,
+    api_key: str
+) -> Optional[float]:
+    """
+    Calculate descriptive similarity between two locations using VLM semantic features.
+
+    Args:
+        location_1: [lat, lon] of first location
+        location_2: [lat, lon] of second location
+        resolution: Comparison resolution (low, medium, high)
+        api_key: User's API key
+
+    Returns:
+        Similarity score between 0 and 1
+    """
+    if not EIKON_AVAILABLE:
+        return _generate_mock_similarity(location_1, location_2, resolution)
+
+    try:
+        similarity = eikon.similarity.descriptive_similarity(
+            location_1_lat_lon_list=location_1,
+            location_2_lat_lon_list=location_2,
+            resolution=resolution,
+            user_api_key=api_key
+        )
+        return similarity
+    except Exception as e:
+        st.error(f"Similarity error: {str(e)}")
+        return None
+
+
+def calculate_combined_similarity(
+    location_1: List[float],
+    location_2: List[float],
+    resolution: str,
+    api_key: str
+) -> Optional[float]:
+    """
+    Calculate combined similarity between two locations (visual + descriptive).
+
+    Args:
+        location_1: [lat, lon] of first location
+        location_2: [lat, lon] of second location
+        resolution: Comparison resolution (low, medium, high)
+        api_key: User's API key
+
+    Returns:
+        Similarity score between 0 and 1
+    """
+    if not EIKON_AVAILABLE:
+        return _generate_mock_similarity(location_1, location_2, resolution)
+
+    try:
+        similarity = eikon.similarity.combined_similarity(
+            location_1_lat_lon_list=location_1,
+            location_2_lat_lon_list=location_2,
+            resolution=resolution,
+            user_api_key=api_key
+        )
+        return similarity
+    except Exception as e:
+        st.error(f"Similarity error: {str(e)}")
+        return None
+
+
 def run_portfolio_comparison(
     location_df: pd.DataFrame,
     api_key: str,
@@ -657,7 +738,7 @@ def detect_objects_at_location(
         return _generate_mock_object_detection(lat, lon, resolution)
 
     try:
-        base_api_address = st.secrets["api"]["objects_detected"]
+        base_api_address = EIKON_API_ENDPOINTS["objects_detected"]
         payload = {
             "lat": lat,
             "lon": lon,
@@ -691,7 +772,7 @@ def detect_objects_with_image(
         return _generate_mock_object_detection_with_image(location_id)
 
     try:
-        base_api_address = st.secrets["api"]["yolo_detection"]
+        base_api_address = EIKON_API_ENDPOINTS["yolo_detection"]
         payload = {
             "location_id": location_id,
             "api_key": api_key
@@ -765,7 +846,7 @@ def send_chat_message(
         return _generate_mock_chat_response(user_message)
 
     try:
-        base_url = st.secrets["api"]["base_url"]
+        base_url = EIKON_API_ENDPOINTS["base_url"]
         queue_submit_url = f'{base_url}/eikon_ai_chat_queue'
         queue_status_url = f'{base_url}/eikon_ai_chat_queue_status'
 
@@ -779,7 +860,7 @@ def send_chat_message(
         }
 
         # Step 1: Submit to the queue
-        submit_response = requests.post(queue_submit_url, json=payload, timeout=30)
+        submit_response = requests.post(queue_submit_url, json=payload, timeout=120)
         if not submit_response.ok:
             st.error(f"Failed to submit chat request: {submit_response.status_code}")
             return None
@@ -802,7 +883,7 @@ def send_chat_message(
             status_response = requests.get(
                 queue_status_url,
                 params={"job_id": job_id},
-                timeout=120
+                timeout=200
             )
 
             if not status_response.ok and status_response.status_code != 500:
@@ -1637,7 +1718,7 @@ def render_search_tab():
                     # Check progress via the API endpoint
                     try:
                         progress_response = requests.post(
-                            st.secrets["api"]["check_job_complete"],
+                            EIKON_API_ENDPOINTS["check_job_complete"],
                             json={"api_key": user_api_key},
                             timeout=5
                         )
@@ -1968,8 +2049,15 @@ def render_context_tab():
 
 def render_similarity_tab():
     """Render the Similarity Module tab."""
-    st.header("Visual Similarity")
-    st.markdown("Compare the visual similarity between two locations.")
+    st.header("Location Similarity")
+    st.markdown("Compare the similarity between two locations.")
+
+    similarity_type = st.selectbox(
+        "Similarity Type",
+        options=["Visual", "Descriptive", "Combined"],
+        key="sim_type",
+        help="Visual: satellite imagery features | Descriptive: semantic/textual features | Combined: weighted blend of both"
+    )
 
     col1, col2, col3 = st.columns([1, 1, 1])
 
@@ -2032,20 +2120,37 @@ def render_similarity_tab():
         compare_button = st.button("Compare Locations", type="primary", use_container_width=True)
 
     if compare_button:
-        with st.spinner("Calculating visual similarity..."):
-            similarity = calculate_visual_similarity(
-                location_1=[lat1, lon1],
-                location_2=[lat2, lon2],
-                resolution=resolution,
-                api_key=st.session_state.api_key
-            )
+        similarity_type_lower = similarity_type.lower()
+        with st.spinner(f"Calculating {similarity_type_lower} similarity..."):
+            if similarity_type_lower == "visual":
+                similarity = calculate_visual_similarity(
+                    location_1=[lat1, lon1],
+                    location_2=[lat2, lon2],
+                    resolution=resolution,
+                    api_key=st.session_state.api_key
+                )
+            elif similarity_type_lower == "descriptive":
+                similarity = calculate_descriptive_similarity(
+                    location_1=[lat1, lon1],
+                    location_2=[lat2, lon2],
+                    resolution=resolution,
+                    api_key=st.session_state.api_key
+                )
+            else:
+                similarity = calculate_combined_similarity(
+                    location_1=[lat1, lon1],
+                    location_2=[lat2, lon2],
+                    resolution=resolution,
+                    api_key=st.session_state.api_key
+                )
 
             if similarity is not None:
                 st.session_state.similarity_results = {
                     'location_1': [lat1, lon1],
                     'location_2': [lat2, lon2],
                     'resolution': resolution,
-                    'similarity': similarity
+                    'similarity': similarity,
+                    'similarity_type': similarity_type
                 }
 
     # Display results
@@ -2091,6 +2196,7 @@ def render_similarity_tab():
             st.markdown("### Similarity Score")
 
             score = results['similarity']
+            result_type = results.get('similarity_type', 'Visual')
 
             # Color coding based on score
             if score >= 0.7:
@@ -2104,7 +2210,7 @@ def render_similarity_tab():
                 label = "Low Similarity"
 
             st.metric(
-                label="Visual Similarity",
+                label=f"{result_type} Similarity",
                 value=f"{score:.2%}",
                 delta=label
             )
@@ -2112,7 +2218,12 @@ def render_similarity_tab():
             st.progress(score)
 
             st.markdown(f"**Resolution:** {results['resolution'].upper()}")
-            st.caption("Higher scores indicate more visually similar locations based on satellite imagery analysis.")
+            type_descriptions = {
+                "Visual": "Higher scores indicate more visually similar locations based on satellite imagery analysis.",
+                "Descriptive": "Higher scores indicate more semantically similar locations based on scene description analysis.",
+                "Combined": "Higher scores indicate overall similarity combining both visual and descriptive features."
+            }
+            st.caption(type_descriptions.get(result_type, type_descriptions["Visual"]))
 
 
 def render_portfolio_tab():
@@ -2927,13 +3038,23 @@ def get_eikon_avatar():
     return "🛰️"  # Fallback to emoji if logo not found
 
 
+def get_eikon_animated_avatar():
+    """Load the animated EIKON logo GIF for use as chat avatar during thinking."""
+    import os
+    gif_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eikon_logo_animated.gif")
+    if os.path.exists(gif_path):
+        return gif_path
+    return get_eikon_avatar()  # Fallback to static logo
+
+
 def render_ai_chat_tab():
     """Render the AI Chat tab with conversation interface."""
     st.header("EIKON AI Chat")
     st.markdown("Have a conversation with EIKON about satellite imagery, locations, and geospatial analysis.")
 
-    # Load EIKON avatar for assistant messages
+    # Load EIKON avatars — static for history, animated for thinking state
     eikon_avatar = get_eikon_avatar()
+    eikon_animated_avatar = get_eikon_animated_avatar()
 
     # Chat container styling
     st.markdown("""
@@ -2957,7 +3078,7 @@ def render_ai_chat_tab():
     </style>
     """, unsafe_allow_html=True)
 
-    # Main chat layout
+    # Main chat layout — chat on left, info sidebar on right
     col_chat, col_info = st.columns([3, 1])
 
     with col_info:
@@ -2968,6 +3089,7 @@ def render_ai_chat_tab():
             st.session_state.chat_messages = []
             st.session_state.chat_model_cot = []
             st.session_state.chat_conversation = []
+            st.session_state.eikon_pending_request = None
             st.rerun()
 
         st.markdown("---")
@@ -2984,10 +3106,10 @@ def render_ai_chat_tab():
         st.markdown("**Try asking:**")
         example_prompts = [
             "Find me a park with a lake",
-            "What's at Heathrow Airport?",
-            "Compare Hyde Park to Regent's Park",
-            "Detect objects at Wembley Stadium",
-            "Show me industrial areas in East London"
+            "Where are all the airports?",
+            "Find me some large parks",
+            "Fine me some industrial areas and run an object detection to see what's in them",
+            "Find me the bridges in this city and plot them on a map"
         ]
 
         for prompt in example_prompts:
@@ -3005,137 +3127,33 @@ def render_ai_chat_tab():
                     st.markdown(f"**Step {i+1}:** {thought[:200]}...")
 
     with col_chat:
-        # Chat messages display area
-        chat_container = st.container()
+        # Display existing messages
+        for message in st.session_state.chat_messages:
+            role = message['role']
+            content = message['content']
+            images = message.get('images', [])
 
-        with chat_container:
-            # Display existing messages
-            for message in st.session_state.chat_messages:
-                role = message['role']
-                content = message['content']
-                images = message.get('images', [])
+            if role == 'user':
+                with st.chat_message("user"):
+                    st.markdown(content)
+            else:
+                with st.chat_message("assistant", avatar=eikon_avatar):
+                    st.markdown(content)
 
-                if role == 'user':
-                    with st.chat_message("user"):
-                        st.markdown(content)
-                else:
-                    with st.chat_message("assistant", avatar=eikon_avatar):
-                        st.markdown(content)
-
-                        # Display any images that came with the response
-                        if images and len(images) > 0:
-                            # Filter out invalid images
-                            valid_images = [
-                                img for img in images
-                                if img and img not in ["no_objects_found", "no_image_in_demo_mode", None, ""]
-                            ]
-
-                            if valid_images:
-                                st.markdown("**Attached Images:**")
-                                # Create columns for images
-                                num_images = len(valid_images)
-                                if num_images == 1:
-                                    img_cols = [st.container()]
-                                else:
-                                    img_cols = st.columns(min(num_images, 3))
-
-                                for idx, img_b64 in enumerate(valid_images):
-                                    try:
-                                        # Decode base64 to bytes
-                                        img_bytes = base64.b64decode(img_b64)
-
-                                        # Open as PIL Image
-                                        img = PILImage.open(BytesIO(img_bytes))
-
-                                        col_idx = idx % len(img_cols)
-                                        with img_cols[col_idx]:
-                                            st.image(img, caption=f"Image {idx + 1}", use_container_width=True)
-                                    except Exception as e:
-                                        st.warning(f"Could not display image {idx + 1}: {str(e)[:50]}")
-
-        # Chat input
-        st.markdown("---")
-
-        # Check for pending message from example buttons
-        pending = st.session_state.get('pending_message', None)
-        if pending:
-            user_input = pending
-            del st.session_state.pending_message
-        else:
-            user_input = st.chat_input("Type your message to EIKON...")
-
-        if user_input:
-            # Add user message to display
-            st.session_state.chat_messages.append({
-                'role': 'user',
-                'content': user_input,
-                'images': []
-            })
-
-            # Format for API
-            cleaned_user_message = f"USER: {user_input}"
-            st.session_state.chat_conversation.append(cleaned_user_message)
-
-            # Show user message immediately
-            with st.chat_message("user"):
-                st.markdown(user_input)
-
-            # Get response from EIKON
-            with st.chat_message("assistant", avatar=eikon_avatar):
-                with st.spinner("EIKON is thinking..."):
-                    response = send_chat_message(
-                        user_message=user_input,
-                        model_cot_history=st.session_state.chat_model_cot,
-                        conversation_history=st.session_state.chat_conversation,
-                        api_key=st.session_state.api_key
-                    )
-
-                    if response:
-                        # Extract the clean response text
-                        model_response_raw = response.get('model_response', '')
-                        clean_response = extract_chat_response(model_response_raw)
-
-                        # Get any images - handle both list and single image cases
-                        raw_images = response.get('map_bytes', None)
-
-                        # Normalize images to a list
-                        if raw_images is None:
-                            images = []
-                        elif isinstance(raw_images, str):
-                            # Single image returned as string
-                            images = [raw_images] if raw_images else []
-                        elif isinstance(raw_images, list):
-                            images = raw_images
-                        else:
-                            images = []
-
+                    # Display any images that came with the response
+                    if images and len(images) > 0:
                         # Filter out invalid images
                         valid_images = [
                             img for img in images
-                            if img and isinstance(img, str) and img not in ["no_objects_found", "no_image_in_demo_mode", ""]
+                            if img and img not in ["no_objects_found", "no_image_in_demo_mode", None, ""]
                         ]
 
-                        # Update model CoT history
-                        cot_info = response.get('in_conversation_information', '')
-                        if cot_info:
-                            cot_items = cot_info.split("\n *")
-                            for item in cot_items:
-                                if item.strip() and item not in st.session_state.chat_model_cot:
-                                    st.session_state.chat_model_cot.append(item.strip())
-
-                        # Display the response
-                        st.markdown(clean_response)
-
-                        # Display images if present
                         if valid_images:
                             st.markdown("**Attached Images:**")
+                            # Create columns for images
                             num_images = len(valid_images)
-
-                            # Create layout based on number of images
                             if num_images == 1:
                                 img_cols = [st.container()]
-                            elif num_images == 2:
-                                img_cols = st.columns(2)
                             else:
                                 img_cols = st.columns(min(num_images, 3))
 
@@ -3149,53 +3167,296 @@ def render_ai_chat_tab():
 
                                     col_idx = idx % len(img_cols)
                                     with img_cols[col_idx]:
-                                        # Determine image type for caption
-                                        img_type = "Image"
-                                        if idx == 0 and num_images == 1:
-                                            img_type = "Generated Image"
-                                        st.image(img, caption=f"{img_type} {idx + 1}", use_container_width=True)
-                                except base64.binascii.Error as e:
-                                    st.warning(f"Image {idx + 1}: Invalid base64 encoding")
+                                        st.image(img, caption=f"Image {idx + 1}", use_container_width=True)
                                 except Exception as e:
-                                    st.warning(f"Image {idx + 1}: Could not display - {str(e)[:50]}")
+                                    st.warning(f"Could not display image {idx + 1}: {str(e)[:50]}")
 
-                        # Add assistant message to history (store valid images only)
-                        st.session_state.chat_messages.append({
-                            'role': 'assistant',
-                            'content': clean_response,
-                            'images': valid_images
-                        })
+        # Chat input — pinned inside the left column, below messages
+        pending = st.session_state.get('pending_message', None)
+        if pending:
+            user_input = pending
+            del st.session_state.pending_message
+        else:
+            user_input = st.chat_input("Type your message to EIKON...")
 
-                        # Update conversation history for API
-                        cleaned_eikon_response = f"EIKON: {clean_response}"
-                        st.session_state.chat_conversation.append(cleaned_eikon_response)
+        # Process new user input
+        if user_input:
+            # Add user message to history immediately so it renders in the
+            # message loop on next rerun
+            st.session_state.chat_messages.append({
+                'role': 'user',
+                'content': user_input,
+                'images': []
+            })
 
-                    else:
-                        error_msg = "I'm sorry, I couldn't process your request. Please try again."
-                        st.markdown(error_msg)
-                        st.session_state.chat_messages.append({
-                            'role': 'assistant',
-                            'content': error_msg,
-                            'images': []
-                        })
+            # Format for API
+            cleaned_user_message = f"USER: {user_input}"
+            st.session_state.chat_conversation.append(cleaned_user_message)
 
-            # Rerun to update the display
+            # Flag that we're waiting for a response — triggers a rerun that
+            # shows the user message from history + thinking indicator below it
+            st.session_state.eikon_pending_request = {
+                'user_message': user_input,
+                'model_cot_history': list(st.session_state.chat_model_cot),
+                'conversation_history': list(st.session_state.chat_conversation),
+                'api_key': st.session_state.api_key
+            }
+            st.rerun()
+
+        # If there's a pending request, show thinking indicator and make the API call.
+        # At this point the user message is already in chat_messages and rendered
+        # above by the message loop, so the flow is: messages → thinking → chat input
+        if st.session_state.get('eikon_pending_request'):
+            req = st.session_state.eikon_pending_request
+
+            with st.chat_message("assistant", avatar=eikon_animated_avatar):
+                st.markdown("*EIKON is thinking...*")
+
+            response = send_chat_message(
+                user_message=req['user_message'],
+                model_cot_history=req['model_cot_history'],
+                conversation_history=req['conversation_history'],
+                api_key=req['api_key']
+            )
+
+            # Clear the pending flag
+            del st.session_state.eikon_pending_request
+
+            if response:
+                # Extract the clean response text
+                model_response_raw = response.get('model_response', '')
+                clean_response = extract_chat_response(model_response_raw)
+
+                # Get any images - handle both list and single image cases
+                raw_images = response.get('map_bytes', None)
+
+                # Normalize images to a list
+                if raw_images is None:
+                    images = []
+                elif isinstance(raw_images, str):
+                    images = [raw_images] if raw_images else []
+                elif isinstance(raw_images, list):
+                    images = raw_images
+                else:
+                    images = []
+
+                # Filter out invalid images
+                valid_images = [
+                    img for img in images
+                    if img and isinstance(img, str) and img not in ["no_objects_found", "no_image_in_demo_mode", ""]
+                ]
+
+                # Update model CoT history
+                cot_info = response.get('in_conversation_information', '')
+                if cot_info:
+                    cot_items = cot_info.split("\n *")
+                    for item in cot_items:
+                        if item.strip() and item not in st.session_state.chat_model_cot:
+                            st.session_state.chat_model_cot.append(item.strip())
+
+                # Add assistant message to history
+                st.session_state.chat_messages.append({
+                    'role': 'assistant',
+                    'content': clean_response,
+                    'images': valid_images
+                })
+
+                # Update conversation history for API
+                cleaned_eikon_response = f"EIKON: {clean_response}"
+                st.session_state.chat_conversation.append(cleaned_eikon_response)
+
+            else:
+                error_msg = "I'm sorry, I couldn't process your request. Please try again."
+                st.session_state.chat_messages.append({
+                    'role': 'assistant',
+                    'content': error_msg,
+                    'images': []
+                })
+
+            # Rerun to show the response from history
             st.rerun()
 
 
+def render_memory_tab():
+    """Render the Memory tab — view and manage EIKON's memories about you."""
+    st.header("EIKON Memory")
+    st.markdown("View what EIKON remembers about you across conversations. You can delete any memory snippet.")
+
+    if not st.session_state.get("authenticated") or not st.session_state.get("api_key"):
+        st.warning("Please sign in to view your memories.")
+        return
+
+    api_key = st.session_state.api_key
+    base_url = EIKON_API_ENDPOINTS["base_url"]
+
+    # Fetch memory data from backend
+    try:
+        mem_response = requests.get(f"{base_url}/memory/{api_key}", timeout=10)
+        if not mem_response.ok:
+            st.error(f"Could not load memories (status {mem_response.status_code})")
+            return
+        memory_data = mem_response.json()
+    except requests.exceptions.ConnectionError:
+        st.warning("Cannot connect to the EIKON backend. Memory features require the API server to be running.")
+        return
+    except Exception as e:
+        st.error(f"Error loading memories: {str(e)[:100]}")
+        return
+
+    # --- Reflection / User Profile ---
+    reflection = memory_data.get("reflection")
+    if reflection:
+        st.subheader("User Profile")
+        st.markdown(f"*Last updated: {reflection['created_at'][:10]}* (v{reflection['version']})")
+        st.markdown(reflection["content"])
+        st.markdown("---")
+
+    # --- Manual Reflect Button ---
+    col_reflect, col_stats = st.columns([1, 2])
+    with col_reflect:
+        if st.button("Generate Reflection", use_container_width=True):
+            with st.spinner("Generating reflection from your memory snippets..."):
+                try:
+                    reflect_resp = requests.post(f"{base_url}/memory/{api_key}/reflect", timeout=120)
+                    if reflect_resp.ok:
+                        result = reflect_resp.json()
+                        if result.get("reflection"):
+                            st.success("Reflection generated!")
+                            st.rerun()
+                        else:
+                            st.info("No snippets available to generate a reflection from.")
+                    else:
+                        st.error(f"Reflection failed (status {reflect_resp.status_code})")
+                except Exception as e:
+                    st.error(f"Error: {str(e)[:100]}")
+    with col_stats:
+        snippets = memory_data.get("snippets", [])
+        since_reflection = memory_data.get("snippet_count_since_reflection", 0)
+        st.metric("Total Active Snippets", len(snippets))
+        st.metric("Snippets Since Last Reflection", since_reflection)
+
+    st.markdown("---")
+
+    # --- Snippets List ---
+    snippets = memory_data.get("snippets", [])
+    if snippets:
+        st.subheader(f"Memory Snippets ({len(snippets)})")
+        for i, snippet in enumerate(snippets):
+            col_content, col_meta, col_delete = st.columns([5, 2, 1])
+            with col_content:
+                type_emoji = {"fact": "F", "preference": "P", "correction": "C", "project_context": "PC"}.get(snippet["type"], "?")
+                st.markdown(f"**[{type_emoji}]** {snippet['content']}")
+            with col_meta:
+                st.caption(f"{snippet['created_at'][:10]} | {snippet['type']}")
+            with col_delete:
+                if st.button("Delete", key=f"del_snippet_{snippet['id']}"):
+                    try:
+                        del_resp = requests.delete(
+                            f"{base_url}/memory/{api_key}/snippet/{snippet['id']}",
+                            timeout=10,
+                        )
+                        if del_resp.ok:
+                            st.rerun()
+                        else:
+                            st.error("Delete failed")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)[:50]}")
+    else:
+        st.info("No memories yet. EIKON will start remembering things about you as you chat.")
+
+
+def fetch_previous_searches(api_key: str, num_results: int = 10) -> Optional[list]:
+    """
+    Fetch previous search results from the API.
+
+    Args:
+        api_key: User's EIKON API key
+        num_results: Number of past searches to retrieve
+
+    Returns:
+        List of parsed DataFrames, or None on failure
+    """
+    if not EIKON_AVAILABLE:
+        return None
+    try:
+        raw_results = eikon.utils.get_previous_search_api_results(
+            api_key=api_key,
+            num_requested_results=num_results
+        )
+        if not raw_results:
+            return None
+        parsed = []
+        for result_json in raw_results:
+            df = pd.DataFrame.from_dict(json.loads(result_json))
+            parsed.append(df)
+        return parsed
+    except Exception:
+        return None
+
+
 def render_history_tab():
-    """Render the Search History tab."""
+    """Render the Search History tab with both session and API-backed history."""
     st.header("Search History")
 
+    # --- Section 1: In-session history ---
+    st.subheader("Current Session")
     if st.session_state.search_history:
         history_df = pd.DataFrame(st.session_state.search_history)
         st.dataframe(history_df, use_container_width=True, hide_index=True)
 
-        if st.button("Clear History"):
+        if st.button("Clear Session History"):
             st.session_state.search_history = []
             st.rerun()
     else:
-        st.info("No search history yet. Start searching to build your history.")
+        st.info("No searches this session yet.")
+
+    st.markdown("---")
+
+    # --- Section 2: Previous searches from API ---
+    st.subheader("Previous Searches")
+
+    if not EIKON_AVAILABLE:
+        st.info("Previous search history is available when connected to the EIKON API.")
+        return
+
+    col_refresh, _ = st.columns([1, 3])
+    with col_refresh:
+        if st.button("Load Previous Searches"):
+            with st.spinner("Fetching previous searches..."):
+                results = fetch_previous_searches(st.session_state.api_key, num_results=10)
+                st.session_state.previous_search_results = results
+
+    previous = st.session_state.previous_search_results
+    if previous:
+        st.caption(f"Showing {len(previous)} previous search(es)")
+        for i, df in enumerate(previous):
+            with st.expander(f"Search {i + 1} — {len(df)} result(s)", expanded=(i == 0)):
+                # Show a compact summary rather than the full dataframe
+                display_cols = [c for c in df.columns if c not in ['objects_detected', 'ai_rationale']]
+                st.dataframe(
+                    df[display_cols] if display_cols else df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+    elif previous is not None:
+        # previous was fetched but returned empty
+        st.info("No previous searches found for this account.")
+    else:
+        st.caption("Click **Load Previous Searches** to retrieve your last 10 searches.")
+
+
+def render_docs_tab():
+    """Render the SDK documentation tab."""
+
+    # Read the markdown documentation file
+    docs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "EIKON_SDK_DOCUMENTATION.md")
+    try:
+        with open(docs_path, "r") as f:
+            docs_content = f.read()
+        st.markdown(docs_content)
+    except FileNotFoundError:
+        st.warning("Documentation file not found.")
+        st.info("Expected location: `EIKON_SDK_DOCUMENTATION.md` in the application directory.")
 
 
 def render_main_app():
@@ -3241,14 +3502,16 @@ def render_main_app():
     st.markdown('<p class="sub-header">Understand your world</p>', unsafe_allow_html=True)
 
     # Tabs
-    tab_chat, tab_search, tab_context, tab_similarity, tab_portfolio, tab_objects, tab_history = st.tabs([
+    tab_chat, tab_search, tab_context, tab_similarity, tab_portfolio, tab_objects, tab_history, tab_memory, tab_docs = st.tabs([
         "AI Chat",
         "Search",
         "Context",
         "Similarity",
         "Portfolio",
         "Object Detection",
-        "History"
+        "History",
+        "Memory",
+        "Docs"
     ])
 
     with tab_chat:
@@ -3271,6 +3534,12 @@ def render_main_app():
 
     with tab_history:
         render_history_tab()
+
+    with tab_memory:
+        render_memory_tab()
+
+    with tab_docs:
+        render_docs_tab()
 
 
 def main():
