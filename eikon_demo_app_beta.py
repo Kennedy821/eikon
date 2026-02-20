@@ -37,6 +37,7 @@ try:
 except ImportError:
     H3_AVAILABLE = False
 
+
 import PIL.Image as Image
 im = Image.open('eikon_logo_tes_v4.png')
 
@@ -147,10 +148,36 @@ def init_session_state():
         'chat_conversation': [],  # Conversation history for API
         'eikon_pending_request': None,  # Pending API request dict (set during thinking state)
         'previous_search_results': None,  # Cached previous search results from API
+        # Voice state
+        'voice_enabled': False,  # Whether TTS voice output is active
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+def request_tts(text: str) -> Optional[bytes]:
+    """Request TTS audio from the server-side Piper endpoint. Returns WAV bytes or None."""
+    if not text or len(text.strip()) < 2:
+        return None
+    try:
+        resp = requests.post(
+            f"{EIKON_API_BASE_URL}/eikon_tts",
+            json={"text": text},
+            timeout=120,
+        )
+        if resp.status_code == 200:
+            audio_b64 = resp.json().get("audio_base64")
+            if audio_b64:
+                return base64.b64decode(audio_b64)
+            else:
+                print(f"[TTS] Server returned 200 but no audio_base64 in response: {resp.json().keys()}")
+        else:
+            print(f"[TTS] Server returned status {resp.status_code}: {resp.text[:200]}")
+        return None
+    except Exception as e:
+        print(f"[TTS] Request failed: {e}")
+        return None
 
 
 def authenticate_user(email: str, password: str) -> Tuple[bool, Optional[str]]:
@@ -870,8 +897,8 @@ def send_chat_message(
         cleaned_user_message = f"USER: {user_message}"
 
         payload = {
-            "model_cot_history": "\n -".join(model_cot_history[-3:]),
-            "conversation_history": "\n\n ".join(conversation_history[-3:] + [cleaned_user_message]),
+            "model_cot_history": "\n -".join(model_cot_history[-10:]),
+            "conversation_history": "\n\n ".join(conversation_history[-10:] + [cleaned_user_message]),
             "api_key": api_key,
         }
 
@@ -957,6 +984,21 @@ def decode_and_display_image(img_b64: str, caption: str = "Image") -> bool:
     except Exception as e:
         st.warning(f"Could not display image: {str(e)[:100]}")
         return False
+
+
+def strip_base64_from_text(text: str) -> str:
+    """
+    Remove base64-encoded image data from text to keep conversation history lightweight.
+    Replaces long base64 strings with a short placeholder so the LLM knows an image
+    was present without receiving the actual bytes.
+    """
+    import re
+    # Match base64 strings that are at least 200 chars long (typical images are thousands)
+    # Looks for data URI patterns (data:image/...;base64,...) and standalone base64 blocks
+    text = re.sub(r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{200,}', '[image]', text)
+    # Standalone base64 blocks (200+ chars of contiguous base64 alphabet)
+    text = re.sub(r'(?<![A-Za-z0-9+/=])[A-Za-z0-9+/=]{200,}(?![A-Za-z0-9+/=])', '[image]', text)
+    return text
 
 
 def extract_chat_response(model_response: str) -> str:
@@ -1152,7 +1194,9 @@ def _generate_mock_search_results(prompt: str) -> pd.DataFrame:
             'description': loc['description'],
             'objects_detected': objects_json,
             'ai_rationale': rationale,
-            'ai_evaluation': 1 if relevance > 0.7 else 0
+            'ai_model_rationale': rationale,
+            'ai_evaluation': 1 if relevance > 0.7 else 0,
+            'ai_model_evaluation': relevance if relevance > 0.7 else np.random.uniform(0.1, 0.49)
         })
 
     # Sort by relevance score descending
@@ -1498,19 +1542,58 @@ def render_location_cards(results_df: pd.DataFrame):
             margin: 3px;
             font-size: 0.85rem;
         }
+        .ai-rec-badge {
+            display: block;
+            width: 100%;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-align: center;
+            margin-top: 4px;
+            border: 1px solid;
+            box-sizing: border-box;
+        }
+        .ai-rec-badge.recommended {
+            background-color: #d4edda;
+            color: #155724;
+            border-color: #c3e6cb;
+        }
+        .ai-rec-badge.not-recommended {
+            background-color: #f8d7da;
+            color: #721c24;
+            border-color: #f5c6cb;
+        }
+        .ai-rec-badge.na {
+            background-color: #e2e3e5;
+            color: #383d41;
+            border-color: #d6d8db;
+        }
+        .ai-rec-label {
+            font-size: 0.875rem;
+            color: #555;
+            margin-bottom: 2px;
+            text-align: center;
+        }
+        .ai-rec-badge.plain {
+            background-color: #ffffff;
+            color: #1E3A5F;
+            border-color: #dee2e6;
+        }
     </style>
     """, unsafe_allow_html=True)
 
     # Build the card
     with st.container():
         # Header with name and relevance
-        header_col1, header_col2 = st.columns([3, 1])
+        header_col1, header_col2, header_col3 = st.columns(3)
 
         with header_col1:
-            location_name = current_loc.get('location_id', 'Unknown Location')
             location_id = current_loc.get('location_id', 'N/A')
-            st.markdown(f"### {location_name}")
-            st.caption(f"ID: `{location_id}`")
+            st.markdown(f"""
+                <div class="ai-rec-label">Location ID</div>
+                <span class="ai-rec-badge plain" style="font-family: monospace;">{location_id}</span>
+            """, unsafe_allow_html=True)
 
         with header_col2:
             relevance = current_loc.get('search_results', 0)
@@ -1519,16 +1602,46 @@ def render_location_cards(results_df: pd.DataFrame):
             relevance_pct = f"{relevance * 100:.1f}%"
 
             if relevance >= 0.8:
-                badge_class = "relevance-high"
                 badge_label = "High Match"
             elif relevance >= 0.6:
-                badge_class = "relevance-medium"
                 badge_label = "Good Match"
             else:
-                badge_class = "relevance-low"
                 badge_label = "Partial Match"
 
-            st.metric("Relevance", relevance_pct)
+            st.markdown(f"""
+                <div class="ai-rec-label">Relevance</div>
+                <span class="ai-rec-badge plain">{relevance_pct} — {badge_label}</span>
+            """, unsafe_allow_html=True)
+
+        with header_col3:
+            # AI Recommendation KPI - uses ai_model_evaluation (float) with
+            # ai_evaluation (binary) as fallback for mock data
+            ai_model_eval = current_loc.get('ai_model_evaluation', None)
+            ai_eval_binary = current_loc.get('ai_evaluation', None)
+
+            if pd.notna(ai_model_eval):
+                is_recommended = float(ai_model_eval) >= 0.5
+                score_display = f"{float(ai_model_eval) * 100:.0f}%"
+            elif pd.notna(ai_eval_binary):
+                is_recommended = int(ai_eval_binary) == 1
+                score_display = None
+            else:
+                is_recommended = None
+                score_display = None
+
+            if is_recommended is not None:
+                badge_text = "Recommended" if is_recommended else "Not Recommended"
+                badge_class = "recommended" if is_recommended else "not-recommended"
+                score_suffix = f" ({score_display})" if score_display else ""
+                st.markdown(f"""
+                    <div class="ai-rec-label">AI Recommendation</div>
+                    <span class="ai-rec-badge {badge_class}">{badge_text}{score_suffix}</span>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                    <div class="ai-rec-label">AI Recommendation</div>
+                    <span class="ai-rec-badge na">N/A</span>
+                """, unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -1553,14 +1666,6 @@ def render_location_cards(results_df: pd.DataFrame):
                                                         resolution=appropriate_resolution,
                                                         user_api_key=st.session_state.api_key))
 
-            # AI Evaluation
-            ai_eval = current_loc.get('ai_evaluation', None)
-            if ai_eval is not None:
-                st.markdown("**AI Evaluation**")
-                if ai_eval == 1:
-                    st.success("Recommended")
-                else:
-                    st.warning("Review Suggested")
 
         with detail_col2:
             # Objects Detected
@@ -1586,11 +1691,20 @@ def render_location_cards(results_df: pd.DataFrame):
         description = current_loc.get('description', 'No description available.')
         st.info(description)
 
-        # AI Rationale Section
+        # AI Model Evaluation Comments
+        ai_model_rationale = current_loc.get('ai_model_rationale', None)
         ai_rationale = current_loc.get('ai_rationale', None)
-        if ai_rationale:
-            with st.expander("AI Analysis & Rationale", expanded=False):
-                st.write(ai_rationale)
+        evaluation_text = ai_model_rationale or ai_rationale
+
+        if evaluation_text:
+            st.markdown("**AI Model Evaluation**")
+            ai_model_eval = current_loc.get('ai_model_evaluation', None)
+            if pd.notna(ai_model_eval) and float(ai_model_eval) >= 0.5:
+                st.success(evaluation_text)
+            elif pd.notna(ai_model_eval):
+                st.warning(evaluation_text)
+            else:
+                st.info(evaluation_text)
 
         # Quick Actions
         st.markdown("---")
@@ -1815,7 +1929,8 @@ def render_search_tab():
                 st.markdown("---")
 
             final_progress = check_search_progress(user_api_key)
-            st.markdown(f"**Final Status:** {final_progress['stage']}")
+            final_stage = final_progress.get('stage') or "Complete"
+            st.markdown(f"**Final Status:** {final_stage}")
 
         if 'ai_model_evaluation' in results.columns:
             recommended = (results['ai_model_evaluation'] >= 0.5).sum()
@@ -3340,6 +3455,16 @@ def render_ai_chat_tab():
 
         st.markdown("---")
 
+        # Voice output toggle
+        st.markdown("**Voice Output**")
+        st.session_state.voice_enabled = st.toggle(
+            "Enable EIKON Voice",
+            value=st.session_state.voice_enabled,
+            help="When enabled, EIKON will speak its responses aloud."
+        )
+
+        st.markdown("---")
+
         # Chat statistics
         st.markdown("**Conversation Stats**")
         st.metric("Messages", len(st.session_state.chat_messages))
@@ -3416,6 +3541,11 @@ def render_ai_chat_tab():
                                         st.image(img, caption=f"Image {idx + 1}", use_container_width=True)
                                 except Exception as e:
                                     st.warning(f"Could not display image {idx + 1}: {str(e)[:50]}")
+
+                    # Display audio player if voice audio is available
+                    audio_bytes = message.get('audio_bytes')
+                    if audio_bytes:
+                        st.audio(audio_bytes, format="audio/wav")
 
         # Chat input — pinned inside the left column, below messages
         pending = st.session_state.get('pending_message', None)
@@ -3497,18 +3627,28 @@ def render_ai_chat_tab():
                 if cot_info:
                     cot_items = cot_info.split("\n *")
                     for item in cot_items:
-                        if item.strip() and item not in st.session_state.chat_model_cot:
-                            st.session_state.chat_model_cot.append(item.strip())
+                        cleaned_item = strip_base64_from_text(item.strip())
+                        if cleaned_item and cleaned_item not in st.session_state.chat_model_cot:
+                            st.session_state.chat_model_cot.append(cleaned_item)
+
+                # Synthesize voice audio if enabled
+                audio_bytes = None
+                if st.session_state.voice_enabled:
+                    audio_bytes = request_tts(clean_response)
+                    if audio_bytes is None:
+                        st.toast("Voice synthesis unavailable — check server connection", icon="🔇")
 
                 # Add assistant message to history
                 st.session_state.chat_messages.append({
                     'role': 'assistant',
                     'content': clean_response,
-                    'images': valid_images
+                    'images': valid_images,
+                    'audio_bytes': audio_bytes
                 })
 
-                # Update conversation history for API
-                cleaned_eikon_response = f"EIKON: {clean_response}"
+                # Update conversation history for API (strip any base64 image data
+                # so historic turns don't balloon the payload sent to the LLM)
+                cleaned_eikon_response = f"EIKON: {strip_base64_from_text(clean_response)}"
                 st.session_state.chat_conversation.append(cleaned_eikon_response)
 
             else:
@@ -3516,7 +3656,8 @@ def render_ai_chat_tab():
                 st.session_state.chat_messages.append({
                     'role': 'assistant',
                     'content': error_msg,
-                    'images': []
+                    'images': [],
+                    'audio_bytes': None
                 })
 
             # Rerun to show the response from history
@@ -3666,10 +3807,11 @@ def render_history_tab():
         return
 
     col_refresh, _ = st.columns([1, 3])
+    # allow the user to see their last 3 previous searches
     with col_refresh:
         if st.button("Load Previous Searches"):
             with st.spinner("Fetching previous searches..."):
-                results = fetch_previous_searches(st.session_state.api_key, num_results=10)
+                results = fetch_previous_searches(st.session_state.api_key, num_results=3)
                 st.session_state.previous_search_results = results
 
     previous = st.session_state.previous_search_results
@@ -3688,7 +3830,7 @@ def render_history_tab():
         # previous was fetched but returned empty
         st.info("No previous searches found for this account.")
     else:
-        st.caption("Click **Load Previous Searches** to retrieve your last 10 searches.")
+        st.caption("Click **Load Previous Searches** to retrieve your last 3 searches.")
 
 
 def render_docs_tab():
