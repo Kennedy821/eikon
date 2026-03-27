@@ -19,5 +19,6 @@ numpy
 pydeck==0.9.1
 plotly>=5.18.0
 eikonsai
+matplotlib
 
 
