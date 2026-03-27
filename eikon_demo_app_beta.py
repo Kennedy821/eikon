@@ -22,13 +22,14 @@ import json
 from typing import Optional, Tuple, List, Dict, Any
 from PIL import Image as PILImage
 from io import BytesIO
-
+import eikonsai as eikon
 # Try to import eikonsai - if not available, we'll use mock functions for demo
 try:
     import eikonsai as eikon
     EIKON_AVAILABLE = True
+
 except ImportError:
-    EIKON_AVAILABLE = False
+    EIKON_AVAILABLE = True
 
 # Import h3 for converting H3 cell IDs to lat/lon coordinates
 try:
