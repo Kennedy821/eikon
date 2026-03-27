@@ -37,9 +37,47 @@ try:
 except ImportError:
     H3_AVAILABLE = False
 
+# Import shapely for geometric operations (drone corridor)
+try:
+    from shapely.geometry import LineString as ShapelyLineString
+    SHAPELY_AVAILABLE = True
+except ImportError:
+    SHAPELY_AVAILABLE = False
+
+# Import geopandas for CRS transformations (drone corridor)
+try:
+    import geopandas as gpd
+    GEOPANDAS_AVAILABLE = True
+except ImportError:
+    GEOPANDAS_AVAILABLE = False
+
+# Import networkx for route pathfinding (drone corridor)
+try:
+    import networkx as nx
+    NETWORKX_AVAILABLE = True
+except ImportError:
+    NETWORKX_AVAILABLE = False
+
 
 import PIL.Image as Image
 im = Image.open('eikon_logo_tes_v4.png')
+
+
+def _load_login_background_image() -> Tuple[Optional[str], bool]:
+    """Return a data URI for the login background image, if available."""
+    image_path = os.path.join(os.path.dirname(__file__), "industrial_image_dark.png")
+    if not os.path.exists(image_path):
+        return None, False
+
+    try:
+        with open(image_path, "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("utf-8")
+        return f"data:image/png;base64,{encoded}", True
+    except (OSError, ValueError):
+        return None, False
+
+
+LOGIN_BACKGROUND_DATA_URI, LOGIN_BACKGROUND_AVAILABLE = _load_login_background_image()
 
 # API endpoints
 EIKON_API_BASE_URL = "https://slugai.pagekite.me"
@@ -126,6 +164,74 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+def _get_login_page_css() -> str:
+    """Return CSS for a background image on the login page only."""
+    if LOGIN_BACKGROUND_AVAILABLE and LOGIN_BACKGROUND_DATA_URI:
+        background_layer = (
+            "linear-gradient(180deg, rgba(4, 14, 32, 0.42) 0%, rgba(4, 14, 32, 0.42) 100%), "
+            f"url('{LOGIN_BACKGROUND_DATA_URI}')"
+        )
+    else:
+        background_layer = "linear-gradient(180deg, rgba(4, 14, 32, 0.3) 0%, rgba(4, 14, 32, 0.3) 100%)"
+
+    return f"""
+    <style>
+    [data-testid="stApp"] {{
+        background-color: #000000;
+    }}
+    [data-testid="stAppViewContainer"] {{
+        background-image: {background_layer};
+        background-color: #000000;
+        background-size: contain;
+        background-position: center center;
+        background-repeat: no-repeat;
+        background-attachment: scroll;
+    }}
+    [data-testid="stAppViewContainer"] > .main {{
+        background: transparent;
+    }}
+    [data-testid="stHeader"] {{
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(2px);
+    }}
+    .login-main-header,
+    .login-sub-header,
+    .login-signin-header,
+    .login-field-label,
+    .login-footnote {{
+        color: #ffffff !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    }}
+    .login-main-header {{
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }}
+    .login-sub-header {{
+        font-size: 1.2rem;
+        margin-bottom: 2rem;
+    }}
+    .login-signin-header {{
+        font-size: 2.25rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+    }}
+    .login-field-label {{
+        font-size: 1.8rem;
+        font-weight: 600;
+        margin: 0.75rem 0 0.35rem;
+    }}
+    .login-divider {{
+        border-color: rgba(255, 255, 255, 0.45);
+        margin-top: 1rem;
+    }}
+    .login-footnote {{
+        margin-top: 0.5rem;
+    }}
+    </style>
+    """
+
+
 # Session state initialization
 def init_session_state():
     """Initialize all session state variables."""
@@ -150,6 +256,16 @@ def init_session_state():
         'previous_search_results': None,  # Cached previous search results from API
         # Voice state
         'voice_enabled': False,  # Whether TTS voice output is active
+        # Drone Corridor state
+        'drone_corridor_results': None,
+        'drone_corridor_route': None,
+        'drone_corridor_summary': None,
+        'drone_corridor_processing': False,
+        'drone_criteria_list': [
+            "I want to find locations that are major industrial areas",
+            "I'm looking for places that are residential",
+            "I am looking for places that have lots of buildings"
+        ],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -239,7 +355,7 @@ def search_locations(
     prompt: str,
     api_key: str,
     effort: str = "test",
-    spatial_resolution: str = "London - all",
+    spatial_resolution: str = "UK - all",
     borough: Optional[str] = None
 ) -> Optional[pd.DataFrame]:
     """
@@ -253,7 +369,7 @@ def search_locations(
         api_key: User's API key
         effort: Search effort level (test, quick, moderate, exhaustive)
         spatial_resolution: Area scope for search
-        borough: Specific London borough (if applicable)
+        borough: Specific gadm3 area (if applicable)
 
     Returns:
         DataFrame with search results or None
@@ -272,8 +388,8 @@ def search_locations(
             "effort_selection": effort,
             "spatial_resolution_for_search": spatial_resolution,
         }
-        if spatial_resolution == "London - boroughs" and borough:
-            payload['selected_london_borough'] = borough
+        if spatial_resolution == "UK - area" and borough:
+            payload['selected_area'] = borough
 
         r = requests.post(base_api_address, json=payload, timeout=10000)
 
@@ -915,7 +1031,7 @@ def send_chat_message(
 
         # Step 2: Poll for the result
         import time as _time
-        max_wait = 900  # 15 minutes max
+        max_wait = 2400  # 40 minutes max
         poll_interval = 3  # seconds between polls
         elapsed = 0
 
@@ -1063,7 +1179,194 @@ DETECTABLE_OBJECTS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Drone Corridor helper functions
+# ---------------------------------------------------------------------------
+
+DRONE_CORRIDOR_DEPS_AVAILABLE = (
+    SHAPELY_AVAILABLE and GEOPANDAS_AVAILABLE and H3_AVAILABLE and NETWORKX_AVAILABLE
+)
+
+
+def generate_corridor_polygon(origin_coords, dest_coords, buffer_metres=7500):
+    """Create a buffered corridor polygon between origin and destination.
+
+    Parameters
+    ----------
+    origin_coords : tuple
+        (latitude, longitude) of origin.
+    dest_coords : tuple
+        (latitude, longitude) of destination.
+    buffer_metres : int
+        Buffer width in metres around the straight line.
+
+    Returns
+    -------
+    shapely.geometry.Polygon
+        Corridor polygon in WGS84 (EPSG:4326).
+    """
+    orig_lat, orig_lon = origin_coords
+    dest_lat, dest_lon = dest_coords
+    line = ShapelyLineString([(orig_lon, orig_lat), (dest_lon, dest_lat)])
+    line_gdf = gpd.GeoDataFrame(geometry=[line], crs=4326).to_crs(27700)
+    line_gdf["geometry"] = line_gdf["geometry"].buffer(buffer_metres)
+    corridor_gdf = line_gdf.to_crs(4326)
+    return corridor_gdf.geometry.iloc[0]
+
+
+def get_corridor_h3_cells(corridor_polygon, resolution=9):
+    """Return all H3 resolution-9 cells within *corridor_polygon*.
+
+    If *resolution* < 9, polyfill is done at the requested resolution and then
+    expanded to resolution-9 children (the EIKON assessment API works at H9).
+    """
+    geojson = corridor_polygon.__geo_interface__
+    parent_cells = h3.polyfill_geojson(geojson, resolution)
+    if resolution == 9:
+        return list(parent_cells)
+    h9_cells = set()
+    for cell in parent_cells:
+        h9_cells.update(h3.h3_to_children(cell, 9))
+    return list(h9_cells)
+
+
+def run_corridor_assessment(api_key, h3_cells, criteria_list):
+    """Call the EIKON assessment API for the given H3 cells and criteria.
+
+    Returns a DataFrame with columns: h3_index_9, pred_h9, pred_h8, pred_h7, cum_score.
+    """
+    return eikon.jobs.run_assessment_custom_polygon(
+        user_api_key=api_key,
+        h3_cells=h3_cells,
+        assessment_criteria=criteria_list,
+    )
+
+
+def compute_safe_route(assessment_df, origin_hex, dest_hex, threshold_percentile=80, k_ring_dist=2):
+    """Find the shortest route through low-risk cells.
+
+    Returns
+    -------
+    dict or None
+        ``{'cells': [...], 'coords': [(lon, lat), ...]}`` on success, or
+        *None* when no safe path exists.
+    """
+    threshold = np.percentile(assessment_df["cum_score"], threshold_percentile)
+    safe_df = assessment_df[assessment_df["cum_score"] < threshold].copy()
+    if safe_df.empty:
+        return None
+
+    # Build adjacency from safe cells and their k-ring neighbours
+    edges = []
+    for cell in safe_df["h3_index_9"]:
+        neighbours = h3.k_ring(cell, k_ring_dist)
+        for nb in neighbours:
+            edges.append((cell, nb))
+    edge_df = pd.DataFrame(edges, columns=["orig", "dest"])
+    G = nx.from_pandas_edgelist(edge_df, source="orig", target="dest")
+
+    # Pick origin / destination H9 cells that exist in the graph
+    orig_children = [c for c in h3.h3_to_children(origin_hex, 9) if c in G]
+    dest_children = [c for c in h3.h3_to_children(dest_hex, 9) if c in G]
+    if not orig_children or not dest_children:
+        return None
+
+    h9_orig = orig_children[0]
+    h9_dest = dest_children[0]
+
+    try:
+        path_cells = nx.shortest_path(G, source=h9_orig, target=h9_dest)
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return None
+
+    path_coords = []
+    for cell in path_cells:
+        lat, lon = h3.h3_to_geo(cell)
+        path_coords.append((lon, lat))
+
+    return {"cells": path_cells, "coords": path_coords}
+
+
+def compute_corridor_summary(assessment_df, route_info, threshold_percentile):
+    """Compute summary statistics for the corridor assessment."""
+    threshold = np.percentile(assessment_df["cum_score"], threshold_percentile)
+    high_risk = assessment_df[assessment_df["cum_score"] >= threshold]
+    summary = {
+        "total_cells": len(assessment_df),
+        "high_risk_count": len(high_risk),
+        "low_risk_count": len(assessment_df) - len(high_risk),
+        "mean_score": float(assessment_df["cum_score"].mean()),
+        "max_score": float(assessment_df["cum_score"].max()),
+        "min_score": float(assessment_df["cum_score"].min()),
+        "threshold_value": float(threshold),
+    }
+    if route_info is not None:
+        coords = route_info["coords"]
+        route_line = ShapelyLineString(coords)
+        route_gdf = gpd.GeoDataFrame(geometry=[route_line], crs=4326).to_crs(27700)
+        summary["route_length_km"] = round(route_gdf.geometry.iloc[0].length / 1000, 2)
+        summary["route_cells_count"] = len(route_info["cells"])
+    else:
+        summary["route_length_km"] = None
+        summary["route_cells_count"] = 0
+    return summary
+
+
+def risk_score_to_color(score, max_score=1.0):
+    """Map a risk score to a blue→red RGBA colour list."""
+    t = min(score / max_score, 1.0) if max_score > 0 else 0
+    r = int(59 + (180 - 59) * t)
+    g = int(76 + (4 - 76) * t)
+    b = int(192 + (38 - 192) * t)
+    return [r, g, b, 180]
+
+
 # Mock data generators for demo mode
+
+def _generate_mock_drone_corridor_results(origin_coords, dest_coords, buffer_metres, resolution,
+                                          threshold_percentile, k_ring_dist):
+    """Generate mock drone corridor assessment data for demo mode.
+
+    All geometric operations run locally; only the API scores are synthesised.
+    """
+    import random as _rng
+    _rng.seed(42)
+
+    corridor_poly = generate_corridor_polygon(origin_coords, dest_coords, buffer_metres)
+    h9_cells = get_corridor_h3_cells(corridor_poly, resolution)
+
+    # Synthesise scores: mostly low with some high-risk clusters
+    scores = []
+    for cell in h9_cells:
+        lat, _ = h3.h3_to_geo(cell)
+        base = abs(lat - 51.4) * 3  # higher risk further from ~51.4
+        noise = _rng.uniform(-0.15, 0.15)
+        scores.append(max(0.0, min(0.88, base + noise)))
+
+    assessment_df = pd.DataFrame({
+        "h3_index_9": h9_cells,
+        "pred_h9": scores,
+        "pred_h8": [s * 0.9 for s in scores],
+        "pred_h7": [s * 0.8 for s in scores],
+        "cum_score": scores,
+    })
+
+    # Derive origin / dest hex at parent resolution for routing
+    origin_hex = h3.geo_to_h3(origin_coords[0], origin_coords[1], 7)
+    dest_hex = h3.geo_to_h3(dest_coords[0], dest_coords[1], 7)
+
+    route_info = compute_safe_route(assessment_df, origin_hex, dest_hex,
+                                    threshold_percentile, k_ring_dist)
+    summary = compute_corridor_summary(assessment_df, route_info, threshold_percentile)
+
+    return {
+        "assessment_df": assessment_df,
+        "route_info": route_info,
+        "summary": summary,
+        "corridor_polygon": corridor_poly,
+    }
+
+
 def _generate_mock_search_results(prompt: str) -> pd.DataFrame:
     """Generate mock search results for demonstration with rich data."""
     np.random.seed(hash(prompt) % 2**32)
@@ -1403,21 +1706,14 @@ def _generate_mock_chat_response(user_message: str) -> Dict[str, Any]:
 
 
 # London boroughs list
-LONDON_BOROUGHS = [
-    "Barking and Dagenham", "Barnet", "Bexley", "Brent", "Bromley",
-    "Camden", "City of London", "Croydon", "Ealing", "Enfield",
-    "Greenwich", "Hackney", "Hammersmith and Fulham", "Haringey", "Harrow",
-    "Havering", "Hillingdon", "Hounslow", "Islington", "Kensington and Chelsea",
-    "Kingston upon Thames", "Lambeth", "Lewisham", "Merton", "Newham",
-    "Redbridge", "Richmond upon Thames", "Southwark", "Sutton", "Tower Hamlets",
-    "Waltham Forest", "Wandsworth", "Westminster"
-]
+LONDON_BOROUGHS = sorted([x for x in pd.read_parquet("uk_h9_hex_to_area_mapping.parquet.gzip")["lad11nm"].unique().tolist() if x != "NA"])
 
 
 def render_login_page():
     """Render the login/authentication page."""
-    st.markdown('<p class="main-header">EIKON</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Understand your world</p>', unsafe_allow_html=True)
+    st.markdown(_get_login_page_css(), unsafe_allow_html=True)
+    st.markdown('<p class="login-main-header">EIKON</p>', unsafe_allow_html=True)
+    st.markdown('<p class="login-sub-header">Understand your world</p>', unsafe_allow_html=True)
 
     if not EIKON_AVAILABLE:
         st.warning("Running in demo mode - eikonsai package not installed. Install with: `pip install eikonsai`")
@@ -1425,11 +1721,13 @@ def render_login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        st.subheader("Sign In")
+        st.markdown('<p class="login-signin-header">Sign In</p>', unsafe_allow_html=True)
 
         with st.form("login_form"):
-            email = st.text_input("Email", placeholder="your.email@example.com")
-            password = st.text_input("Password", type="password")
+            st.markdown('<p class="login-field-label">Email</p>', unsafe_allow_html=True)
+            email = st.text_input("Email", placeholder="your.email@example.com", label_visibility="collapsed")
+            st.markdown('<p class="login-field-label">Password</p>', unsafe_allow_html=True)
+            password = st.text_input("Password", type="password", label_visibility="collapsed")
             submitted = st.form_submit_button("Sign In", use_container_width=True)
 
             if submitted:
@@ -1446,8 +1744,8 @@ def render_login_page():
                         else:
                             st.error("Authentication failed. Please check your credentials.")
 
-        st.markdown("---")
-        st.caption("Don't have an account? Contact support to register.")
+        st.markdown('<hr class="login-divider">', unsafe_allow_html=True)
+        st.markdown('<p class="login-footnote">Don\'t have an account? Contact support to register.</p>', unsafe_allow_html=True)
 
 
 def render_location_cards(results_df: pd.DataFrame):
@@ -1752,7 +2050,7 @@ def render_search_tab():
     if 'last_search_params' not in st.session_state:
         st.session_state.last_search_params = None
     if 'search_spatial_resolution' not in st.session_state:
-        st.session_state.search_spatial_resolution = "London - all"
+        st.session_state.search_spatial_resolution = "UK - all"
     if 'search_active' not in st.session_state:
         st.session_state.search_active = False
     if 'search_params' not in st.session_state:
@@ -2165,14 +2463,14 @@ def render_search_tab():
         # Spatial resolution selector OUTSIDE the form so it can control borough visibility
         spatial_resolution = st.selectbox(
             "Spatial Resolution",
-            options=["London - all", "London - boroughs"],
-            help="Search across all of London or focus on a specific borough",
+            options=["UK - all", "UK - area"],
+            help="Search across all of the UK or focus on a specific area",
             key="search_spatial_resolution"
         )
 
-        # Borough selector - only shown when "London - boroughs" is selected
+        # Borough selector - only shown when "UK - area" is selected
         selected_borough = None
-        if spatial_resolution == "London - boroughs":
+        if spatial_resolution == "UK - area":
             selected_borough = st.selectbox(
                 "Select Borough",
                 options=LONDON_BOROUGHS,
@@ -2249,10 +2547,26 @@ def render_search_tab():
                         map_df['color'] = [[30, 58, 95, 200]] * len(map_df)
                         map_df['ai_status'] = 'N/A'
 
+                    # when there are locations that are very far from each other we need to increase the radius size
+                    
+                    max_distance = results_df['latitude'].max() - results_df['latitude'].min() + results_df['longitude'].max() - results_df['longitude'].min()
+                    if max_distance > 0.2:  # Arbitrary threshold for "far apart"
+                        radius = 2000
+                    elif max_distance > 0.1:
+                        radius = 1000
+                    else:
+                        radius = 500
+
+                    if radius == 2000:
+                        zoom_level = 8
+                    elif radius == 1000:
+                        zoom_level = 9
+                    else:
+                        zoom_level = 10
                     view_state = pdk.ViewState(
                         latitude=results_df['latitude'].mean(),
                         longitude=results_df['longitude'].mean(),
-                        zoom=10,
+                        zoom=zoom_level,
                         pitch=0
                     )
 
@@ -2261,7 +2575,7 @@ def render_search_tab():
                         data=map_df,
                         get_position='[longitude, latitude]',
                         get_color='color',
-                        get_radius=200,
+                        get_radius=radius,
                         pickable=True,
                         auto_highlight=True
                     )
@@ -3408,10 +3722,281 @@ def get_eikon_animated_avatar():
     return get_eikon_avatar()  # Fallback to static logo
 
 
+def render_drone_corridor_tab():
+    """Render the Drone Corridor risk assessment tab."""
+
+    # --- dependency gate ---
+    if not DRONE_CORRIDOR_DEPS_AVAILABLE:
+        st.error(
+            "The Travel Corridor tab requires **shapely**, **geopandas**, **h3**, "
+            "and **networkx**.  Install them with:\n\n"
+            "```\npip install shapely geopandas h3 networkx\n```"
+        )
+        return
+
+    st.header("Travel Corridor Assessment")
+    st.markdown(
+        "Assess risk along a travel corridor for BVLOS (Beyond Visual Line of Sight) "
+        "drone operations and compute an optimised low-risk route."
+    )
+
+    col_input, col_results = st.columns([1, 2])
+
+    # ---- INPUT COLUMN ----
+    with col_input:
+        st.subheader("Origin & Destination")
+        input_method = st.radio(
+            "Input method",
+            ["Coordinates", "H3 Hex ID"],
+            horizontal=True,
+            key="drone_input_method",
+        )
+
+        if input_method == "Coordinates":
+            o_col1, o_col2 = st.columns(2)
+            with o_col1:
+                orig_lat = st.number_input("Origin Latitude", value=51.36, format="%.6f",
+                                           min_value=-90.0, max_value=90.0, key="drone_orig_lat")
+            with o_col2:
+                orig_lon = st.number_input("Origin Longitude", value=0.09, format="%.6f",
+                                           min_value=-180.0, max_value=180.0, key="drone_orig_lon")
+            d_col1, d_col2 = st.columns(2)
+            with d_col1:
+                dest_lat = st.number_input("Destination Latitude", value=51.33, format="%.6f",
+                                           min_value=-90.0, max_value=90.0, key="drone_dest_lat")
+            with d_col2:
+                dest_lon = st.number_input("Destination Longitude", value=0.04, format="%.6f",
+                                           min_value=-180.0, max_value=180.0, key="drone_dest_lon")
+            origin_coords = (orig_lat, orig_lon)
+            dest_coords = (dest_lat, dest_lon)
+        else:
+            orig_hex_input = st.text_input("Origin H3 Hex ID", value="87195d360ffffff",
+                                           key="drone_orig_hex")
+            dest_hex_input = st.text_input("Destination H3 Hex ID", value="87194ad51ffffff",
+                                           key="drone_dest_hex")
+            try:
+                origin_coords = h3.h3_to_geo(orig_hex_input)
+                dest_coords = h3.h3_to_geo(dest_hex_input)
+            except Exception:
+                st.error("Invalid H3 hex ID. Please check your inputs.")
+                return
+
+        st.markdown("---")
+        st.subheader("Corridor Parameters")
+        buffer_km = st.slider("Buffer Width (km)", min_value=1.0, max_value=25.0,
+                              value=7.5, step=0.5, key="drone_buffer_km")
+        buffer_metres = int(buffer_km * 1000)
+
+        h3_resolution = st.select_slider("H3 Resolution", options=[7, 8, 9], value=9,
+                                         key="drone_h3_res")
+        threshold_pct = st.slider("Risk Threshold Percentile", min_value=50, max_value=99,
+                                  value=80, key="drone_threshold_pct")
+        k_ring = st.slider("K-Ring Distance (routing)", min_value=1, max_value=5,
+                           value=2, key="drone_kring")
+
+        st.markdown("---")
+        st.subheader("Assessment Criteria")
+
+        # Dynamic criteria list
+        if "drone_criteria_count" not in st.session_state:
+            st.session_state.drone_criteria_count = len(st.session_state.drone_criteria_list)
+
+        criteria_values = []
+        for i in range(st.session_state.drone_criteria_count):
+            default = (st.session_state.drone_criteria_list[i]
+                       if i < len(st.session_state.drone_criteria_list) else "")
+            val = st.text_input(f"Criterion {i + 1}", value=default,
+                                key=f"drone_criterion_{i}")
+            if val.strip():
+                criteria_values.append(val.strip())
+
+        if st.button("Add criterion", key="drone_add_criterion"):
+            st.session_state.drone_criteria_count += 1
+            st.rerun()
+
+        if not criteria_values:
+            st.warning("Please provide at least one assessment criterion.")
+
+        st.markdown("---")
+
+        # --- RUN BUTTON ---
+        run_btn = st.button("Assess Corridor", type="primary",
+                            use_container_width=True, key="drone_run")
+
+        if run_btn and criteria_values:
+            if origin_coords == dest_coords:
+                st.error("Origin and destination must be different locations.")
+            else:
+                with st.spinner("Generating corridor and assessing risk — this may take several minutes for large corridors..."):
+                    try:
+                        if EIKON_AVAILABLE and st.session_state.api_key:
+                            # ---- LIVE MODE ----
+                            corridor_poly = generate_corridor_polygon(
+                                origin_coords, dest_coords, buffer_metres)
+                            h9_cells = get_corridor_h3_cells(corridor_poly, h3_resolution)
+
+                            if not h9_cells:
+                                st.error("No H3 cells found in the corridor. Try increasing the buffer width.")
+                            else:
+                                if len(h9_cells) > 15000:
+                                    st.warning(f"Large corridor: {len(h9_cells):,} cells. Assessment may take 5+ minutes.")
+
+                                assessment_df = run_corridor_assessment(
+                                    st.session_state.api_key, h9_cells, criteria_values)
+
+                                origin_hex = h3.geo_to_h3(origin_coords[0], origin_coords[1], 7)
+                                dest_hex = h3.geo_to_h3(dest_coords[0], dest_coords[1], 7)
+
+                                route_info = compute_safe_route(
+                                    assessment_df, origin_hex, dest_hex,
+                                    threshold_pct, k_ring)
+                                summary = compute_corridor_summary(
+                                    assessment_df, route_info, threshold_pct)
+
+                                st.session_state.drone_corridor_results = {
+                                    "assessment_df": assessment_df,
+                                    "route_info": route_info,
+                                    "summary": summary,
+                                    "corridor_polygon": corridor_poly,
+                                }
+                                st.success("Corridor assessment complete!")
+                        else:
+                            # ---- DEMO MODE ----
+                            results = _generate_mock_drone_corridor_results(
+                                origin_coords, dest_coords, buffer_metres,
+                                h3_resolution, threshold_pct, k_ring)
+                            st.session_state.drone_corridor_results = results
+                            st.success("Demo assessment complete (mock data).")
+                    except Exception as exc:
+                        st.error(f"Assessment failed: {exc}")
+
+    # ---- RESULTS COLUMN ----
+    with col_results:
+        if st.session_state.drone_corridor_results is None:
+            st.info("Configure parameters on the left and click **Assess Corridor** to begin.")
+            return
+
+        data = st.session_state.drone_corridor_results
+        assessment_df = data["assessment_df"]
+        route_info = data["route_info"]
+        summary = data["summary"]
+        corridor_poly = data["corridor_polygon"]
+
+        # Summary metrics row
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Cells", f"{summary['total_cells']:,}")
+        m2.metric("High Risk",
+                  f"{summary['high_risk_count']:,}",
+                  f"{summary['high_risk_count'] / max(summary['total_cells'], 1) * 100:.0f}%")
+        if summary["route_length_km"] is not None:
+            m3.metric("Route Length", f"{summary['route_length_km']} km")
+        else:
+            m3.metric("Route Length", "N/A")
+        m4.metric("Threshold", f"{summary['threshold_value']:.3f}")
+
+        # Prepare common map data
+        max_score = max(assessment_df["cum_score"].max(), 0.01)
+        hex_df = assessment_df[["h3_index_9", "cum_score"]].copy()
+        hex_df = hex_df.rename(columns={"h3_index_9": "h3_index"})
+        hex_df["color"] = hex_df["cum_score"].apply(
+            lambda s: risk_score_to_color(s, max_score))
+
+        # Origin / destination markers
+        markers = pd.DataFrame([
+            {"lat": origin_coords[0], "lon": origin_coords[1],
+             "color": [0, 200, 0, 220], "label": "Origin"},
+            {"lat": dest_coords[0], "lon": dest_coords[1],
+             "color": [200, 0, 0, 220], "label": "Destination"},
+        ])
+
+        mid_lat = (origin_coords[0] + dest_coords[0]) / 2
+        mid_lon = (origin_coords[1] + dest_coords[1]) / 2
+
+        view = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=11, pitch=0)
+
+        # Layers shared across sub-tabs
+        hex_layer = pdk.Layer(
+            "H3HexagonLayer",
+            data=hex_df,
+            get_hexagon="h3_index",
+            get_fill_color="color",
+            get_line_color=[255, 255, 255, 40],
+            line_width_min_pixels=1,
+            pickable=True,
+            extruded=False,
+            opacity=0.7,
+            stroked=False,
+
+        )
+        marker_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=markers,
+            get_position="[lon, lat]",
+            get_color="color",
+            get_radius=300,
+            pickable=True,
+        )
+
+        tab_risk, tab_route, tab_table = st.tabs(["Risk Map", "Route Map", "Data Table"])
+
+        with tab_risk:
+            deck = pdk.Deck(
+                layers=[hex_layer, marker_layer],
+                initial_view_state=view,
+                tooltip={"text": "H3: {h3_index}\nRisk: {cum_score}"},
+            )
+            st.pydeck_chart(deck)
+
+        with tab_route:
+            if route_info is not None:
+                path_df = pd.DataFrame([{"path": [list(c) for c in route_info["coords"]]}])
+                route_layer = pdk.Layer(
+                    "PathLayer",
+                    data=path_df,
+                    get_path="path",
+                    get_color=[0, 200, 0, 200],
+                    width_min_pixels=4,
+                    pickable=True,
+                )
+                deck_route = pdk.Deck(
+                    layers=[hex_layer, marker_layer, route_layer],
+                    initial_view_state=view,
+                    tooltip={"text": "H3: {h3_index}\nRisk: {cum_score}"},
+                )
+                st.pydeck_chart(deck_route)
+                st.caption(
+                    f"Optimised route: **{summary['route_cells_count']}** cells, "
+                    f"**{summary['route_length_km']} km**"
+                )
+            else:
+                deck_no_route = pdk.Deck(
+                    layers=[hex_layer, marker_layer],
+                    initial_view_state=view,
+                    tooltip={"text": "H3: {h3_index}\nRisk: {cum_score}"},
+                )
+                st.pydeck_chart(deck_no_route)
+                st.warning(
+                    "No safe route found between origin and destination at the "
+                    "current risk threshold. Try lowering the threshold percentile "
+                    "or increasing the buffer width / k-ring distance."
+                )
+
+        with tab_table:
+            display_df = assessment_df.sort_values("cum_score", ascending=False).reset_index(drop=True)
+            st.dataframe(display_df, use_container_width=True)
+            csv = display_df.to_csv(index=False)
+            st.download_button(
+                "Download CSV",
+                data=csv,
+                file_name="drone_corridor_assessment.csv",
+                mime="text/csv",
+            )
+
+
 def render_ai_chat_tab():
     """Render the AI Chat tab with conversation interface."""
-    st.header("EIKON AI Chat")
-    st.markdown("Have a conversation with EIKON about satellite imagery, locations, and geospatial analysis.")
+    st.header("EIKON AI")
+    st.markdown("Have a Eikon support you explore, compare and monitor locations with satellite imagery, maps, and geospatial analysis.")
 
     # Load EIKON avatars — static for history, animated for thinking state
     eikon_avatar = get_eikon_avatar()
@@ -3890,13 +4475,14 @@ def render_main_app():
     st.markdown('<p class="sub-header">Understand your world</p>', unsafe_allow_html=True)
 
     # Tabs
-    tab_chat, tab_search, tab_context, tab_similarity, tab_portfolio, tab_objects, tab_history, tab_memory, tab_docs = st.tabs([
-        "AI Chat",
+    tab_chat, tab_search, tab_context, tab_similarity, tab_portfolio, tab_objects, tab_drone, tab_history, tab_memory, tab_docs = st.tabs([
+        "Eikon AI",
         "Search",
         "Context",
         "Similarity",
         "Portfolio",
         "Object Detection",
+        "BVLOS Assessment",
         "History",
         "Memory",
         "Docs"
@@ -3919,6 +4505,9 @@ def render_main_app():
 
     with tab_objects:
         render_object_detection_tab()
+
+    with tab_drone:
+        render_drone_corridor_tab()
 
     with tab_history:
         render_history_tab()
