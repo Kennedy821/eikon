@@ -21,4 +21,4 @@ plotly>=5.18.0
 eikonsai
 matplotlib
 networkx==3.2.1
-
+colorama
