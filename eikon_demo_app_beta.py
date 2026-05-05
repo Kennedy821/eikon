@@ -9,6 +9,7 @@ Features:
 - Portfolio Comparison: Batch compare multiple location pairs
 """
 
+import functools
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,6 +20,7 @@ import os
 import base64
 import requests
 import json
+import html
 from typing import Optional, Tuple, List, Dict, Any
 from PIL import Image as PILImage
 from io import BytesIO
@@ -59,11 +61,26 @@ try:
 except ImportError:
     NETWORKX_AVAILABLE = False
 
+# Import mapclassify for choropleth classification (BVLOS map)
+try:
+    import mapclassify
+    MAPCLASSIFY_AVAILABLE = True
+except ImportError:
+    MAPCLASSIFY_AVAILABLE = False
+
 
 import PIL.Image as Image
-im = Image.open('eikon_logo_tes_v4.png')
 
 
+@functools.lru_cache(maxsize=1)
+def _load_logo_image():
+    return Image.open('eikon_logo_tes_v4.png')
+
+
+im = _load_logo_image()
+
+
+@functools.lru_cache(maxsize=1)
 def _load_login_background_image() -> Tuple[Optional[str], bool]:
     """Return a data URI for the login background image, if available."""
     image_path = os.path.join(os.path.dirname(__file__), "industrial_image_dark.png")
@@ -89,6 +106,7 @@ EIKON_API_ENDPOINTS = {
     "objects_detected": f"{EIKON_API_BASE_URL}/get_objects_detected_in_location",
     "yolo_detection": f"{EIKON_API_BASE_URL}/yolo_object_detection_on_image",
     "check_job_complete": f"{EIKON_API_BASE_URL}/check_if_eikon_search_agent_api_job_complete_web",
+    "chat_reasoning_traces": f"{EIKON_API_BASE_URL}/eikon_ai_chat_reasoning_traces",
 }
 
 # Page configuration
@@ -125,6 +143,33 @@ st.markdown("""
         height: 50px;
         padding: 10px 20px;
         font-weight: 500;
+    }
+    .st-key-active_main_tab [role="radiogroup"] {
+        gap: 24px;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.2);
+        padding: 0;
+    }
+    .st-key-active_main_tab label[data-baseweb="radio"] {
+        margin: 0;
+        padding: 0;
+        min-height: 50px;
+        border-bottom: 2px solid transparent;
+    }
+    .st-key-active_main_tab label[data-baseweb="radio"] > div:first-child {
+        display: none;
+    }
+    .st-key-active_main_tab label[data-baseweb="radio"] p {
+        margin: 0;
+        padding: 10px 20px;
+        font-weight: 500;
+        color: #31333F;
+    }
+    .st-key-active_main_tab label[data-baseweb="radio"]:has(input[type="radio"]:checked) {
+        border-bottom-color: #ff4b4b;
+    }
+    .st-key-active_main_tab label[data-baseweb="radio"]:has(input[type="radio"]:checked) p {
+        color: #1E3A5F;
+        font-weight: 600;
     }
     .credits-box {
         position: fixed;
@@ -259,13 +304,12 @@ def init_session_state():
         'voice_enabled': False,  # Whether TTS voice output is active
         # Drone Corridor state
         'drone_corridor_results': None,
-        'drone_corridor_route': None,
-        'drone_corridor_summary': None,
         'drone_corridor_processing': False,
+        'active_main_tab': "Eikon AI",
         'drone_criteria_list': [
-            "I want to find locations that are major industrial areas",
-            "I'm looking for places that are residential",
-            "I am looking for places that have lots of buildings"
+            "major industrial areas",
+            "residential houses",
+            "lots of buildings"
         ],
     }
     for key, value in defaults.items():
@@ -330,6 +374,7 @@ def authenticate_user(email: str, password: str) -> Tuple[bool, Optional[str]]:
 def get_user_credit_balance(api_key: str) -> Optional[float]:
     """
     Get the current credit balance for a user.
+    Cached in session state for 60s to avoid an API call on every rerun.
 
     Args:
         api_key: User's API key
@@ -337,19 +382,30 @@ def get_user_credit_balance(api_key: str) -> Optional[float]:
     Returns:
         Current credit balance or None if unavailable
     """
+    import time as _time
+
+    cache_key = "_credit_balance_cache"
+    cache_ts_key = "_credit_balance_ts"
+    cached = st.session_state.get(cache_key)
+    cached_ts = st.session_state.get(cache_ts_key, 0)
+    if cached is not None and (_time.time() - cached_ts) < 60:
+        return cached
+
     if not EIKON_AVAILABLE:
         # Demo mode - return mock balance
-        return 1000.0
+        balance = 1000.0
+    else:
+        try:
+            base_api_address = EIKON_API_ENDPOINTS["check_credits"]
+            payload = {"api_key": api_key}
+            r = requests.post(base_api_address, json=payload, timeout=10)
+            balance = r.json().get("current_api_credit_balance") if r.ok else None
+        except Exception:
+            balance = None
 
-    try:
-        base_api_address = EIKON_API_ENDPOINTS["check_credits"]
-        payload = {"api_key": api_key}
-        r = requests.post(base_api_address, json=payload, timeout=10)
-        if r.ok:
-            return r.json().get("current_api_credit_balance")
-        return None
-    except Exception:
-        return None
+    st.session_state[cache_key] = balance
+    st.session_state[cache_ts_key] = _time.time()
+    return balance
 
 
 def search_locations(
@@ -625,6 +681,59 @@ def parse_model_thought(thought_text: str) -> Dict[str, str]:
             rationale = line.replace("AI Rationale:", "").strip()
 
     return {"evaluation": evaluation, "rationale": rationale}
+
+
+def get_chat_reasoning_traces(api_key: str, since_index: int = 0) -> Dict[str, Any]:
+    """Read chat reasoning trace files from disk, returning new ones since since_index."""
+    chat_dir = f"/Users/tariromashongamhende/Local Files/ml_projects/satellite_slug/project_eikon/mapping_tables/user_data_tables/users/{api_key}/chat_thoughts"
+    if not os.path.exists(chat_dir):
+        return {"traces": [], "latest_index": 0, "is_complete": False}
+
+    files = sorted([f for f in os.listdir(chat_dir) if f.startswith("thought_")])
+    traces, is_complete, latest_index = [], False, since_index
+
+    for fname in files:
+        if fname == "thought_final.json":
+            is_complete = True
+        try:
+            with open(os.path.join(chat_dir, fname), "r") as f:
+                trace = json.load(f)
+            if trace.get("index", 0) >= since_index:
+                traces.append(trace)
+                latest_index = max(latest_index, trace.get("index", 0))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"traces": traces, "latest_index": latest_index, "is_complete": is_complete}
+
+
+TRACE_TYPE_LABELS = {
+    "thinking": "Reasoning",
+    "tool_result": "Tool results received",
+    "similarity": "Comparing locations",
+    "comparison": "Running comparison",
+    "area_comparison": "Comparing areas",
+    "vision": "Analysing satellite imagery",
+    "object_detection": "Detecting objects",
+    "location_summary": "Summarising location",
+    "surroundings": "Analysing surroundings",
+    "screening": "Screening locations",
+    "search": "Searching locations",
+    "prev_search": "Reviewing previous search",
+    "inner_voice": "Reflecting",
+    "map_error": "Map generation issue",
+    "complete": "Ready to respond",
+    "init": "Loading context",
+}
+
+
+def format_trace_for_display(trace: Dict) -> str:
+    """Format a reasoning trace for UI display. Prefers LLM summary when available."""
+    label = TRACE_TYPE_LABELS.get(trace.get("type", ""), trace.get("type", ""))
+    summary = trace.get("summary")
+    if summary:
+        return f"**{label}** — {summary}"
+    content = trace.get("content", "")[:150]
+    return f"**{label}** — {content}"
 
 
 def get_search_final_results(api_key: str) -> Optional[str]:
@@ -983,7 +1092,8 @@ def send_chat_message(
     user_message: str,
     model_cot_history: List[str],
     conversation_history: List[str],
-    api_key: str
+    api_key: str,
+    reasoning_container=None
 ) -> Optional[Dict[str, Any]]:
     """
     Send a message to the EIKON AI Chat endpoint.
@@ -993,6 +1103,7 @@ def send_chat_message(
         model_cot_history: List of model's chain of thought entries
         conversation_history: List of previous conversation turns
         api_key: User's API key
+        reasoning_container: Optional st.empty() container for live reasoning trace display
 
     Returns:
         Dictionary with:
@@ -1017,10 +1128,15 @@ def send_chat_message(
             "model_cot_history": "\n -".join(model_cot_history[-10:]),
             "conversation_history": "\n\n ".join(conversation_history[-10:] + [cleaned_user_message]),
             "api_key": api_key,
+            "model_backend": "doubleword",
         }
 
         # Step 1: Submit to the queue
-        submit_response = requests.post(queue_submit_url, json=payload, timeout=120)
+        try:
+            submit_response = requests.post(queue_submit_url, json=payload, timeout=120)
+        except requests.exceptions.Timeout:
+            st.error("Chat request timed out submitting to the queue. Please try again.")
+            return None
         if not submit_response.ok:
             st.error(f"Failed to submit chat request: {submit_response.status_code}")
             return None
@@ -1035,34 +1151,59 @@ def send_chat_message(
         max_wait = 2400  # 40 minutes max
         poll_interval = 3  # seconds between polls
         elapsed = 0
+        _last_trace_idx = 0
+        _all_traces = []
+        _consecutive_status_failures = 0
+        _max_consecutive_failures = 60  # ~3 min of solid failure at 3s poll interval
 
         while elapsed < max_wait:
             _time.sleep(poll_interval)
             elapsed += poll_interval
 
-            status_response = requests.get(
-                queue_status_url,
-                params={"job_id": job_id},
-                timeout=200
-            )
+            # Poll for reasoning traces and update the live display
+            if reasoning_container is not None:
+                try:
+                    traces_data = get_chat_reasoning_traces(api_key, since_index=_last_trace_idx)
+                    if traces_data["traces"]:
+                        _last_trace_idx = traces_data["latest_index"] + 1
+                        _all_traces.extend(traces_data["traces"])
+                        with reasoning_container:
+                            for t in _all_traces[-6:]:
+                                st.caption(format_trace_for_display(t))
+                except Exception:
+                    pass
 
-            if not status_response.ok and status_response.status_code != 500:
-                st.error(f"Queue status check failed: {status_response.status_code}")
-                return None
+            try:
+                status_response = requests.get(
+                    queue_status_url,
+                    params={"job_id": job_id},
+                    timeout=200
+                )
 
-            status_data = status_response.json()
+                if not status_response.ok and status_response.status_code != 500:
+                    st.error(f"Queue status check failed: {status_response.status_code}")
+                    return None
 
-            if status_data["status"] == "completed":
-                return status_data["result"]
-            elif status_data["status"] == "failed":
-                st.error(f"Chat processing failed: {status_data.get('error', 'Unknown error')}")
-                return None
-            # else still queued/processing — keep polling
+                status_data = status_response.json()
+                _consecutive_status_failures = 0
+
+                if status_data["status"] == "completed":
+                    return status_data["result"]
+                elif status_data["status"] == "failed":
+                    st.error(f"Chat processing failed: {status_data.get('error', 'Unknown error')}")
+                    return None
+                # else still queued/processing — keep polling
+            except (requests.exceptions.RequestException, ValueError) as _poll_err:
+                # Backend job may still be running; transient blip — keep polling.
+                _consecutive_status_failures += 1
+                if _consecutive_status_failures >= _max_consecutive_failures:
+                    st.error(
+                        f"Lost connection to chat status endpoint after "
+                        f"{_consecutive_status_failures} consecutive failures: {_poll_err}"
+                    )
+                    return None
 
         st.error("Chat request timed out after waiting in queue. Please try again.")
-        return None
-    except requests.exceptions.Timeout:
-        st.error("Chat request timed out. The server may be busy, please try again.")
         return None
     except Exception as e:
         st.error(f"Chat error: {str(e)}")
@@ -1235,12 +1376,43 @@ def run_corridor_assessment(api_key, h3_cells, criteria_list):
     """Call the EIKON assessment API for the given H3 cells and criteria.
 
     Returns a DataFrame with columns: h3_index_9, pred_h9, pred_h8, pred_h7, cum_score.
+
+    Note: bypasses eikonsai.jobs.run_assessment_custom_polygon because that
+    function retries on any exception (including post-processing response
+    drops), which causes the server to receive and process the same payload
+    twice. We issue a single POST and surface failures to the caller instead.
     """
-    return eikon.jobs.run_assessment_custom_polygon(
-        user_api_key=api_key,
-        h3_cells=h3_cells,
-        assessment_criteria=criteria_list,
-    )
+    import json as _json
+    import requests as _req
+
+    awake_url = f"{EIKON_API_BASE_URL}/eikon_search_worker_awake"
+    assessment_url = f"{EIKON_API_BASE_URL}/run_assessment_custom_polygon_cuda"
+
+    try:
+        check_r = _req.post(awake_url, json={"check": "placeholder"}, timeout=30)
+        if not check_r.ok or check_r.json().get("status") != "awake":
+            return "Eikon assessment server is not available right now. Please try again shortly."
+    except Exception as exc:
+        return f"Could not reach Eikon assessment server: {exc}"
+
+    payload = {
+        "api_key": api_key,
+        "assessment_criteria": criteria_list,
+        "h3_cells": h3_cells,
+    }
+    try:
+        r = _req.post(assessment_url, json=payload, timeout=50000)
+    except Exception as exc:
+        return f"Assessment request failed: {exc}"
+
+    if not r.ok:
+        try:
+            err = r.json()
+        except Exception:
+            err = r.text
+        return f"Assessment failed with status {r.status_code}: {err}"
+
+    return pd.DataFrame.from_dict(_json.loads(r.json()["assessment_result"]))
 
 
 def compute_safe_route(assessment_df, origin_hex, dest_hex, threshold_percentile=80, k_ring_dist=2):
@@ -1288,29 +1460,184 @@ def compute_safe_route(assessment_df, origin_hex, dest_hex, threshold_percentile
     return {"cells": path_cells, "coords": path_coords}
 
 
-def compute_corridor_summary(assessment_df, route_info, threshold_percentile):
-    """Compute summary statistics for the corridor assessment."""
-    threshold = np.percentile(assessment_df["cum_score"], threshold_percentile)
-    high_risk = assessment_df[assessment_df["cum_score"] >= threshold]
+def compute_multi_threshold_routes(assessment_df, origin_hex, dest_hex,
+                                   percentile_list=(99,95,90,85,80,75,70,65,60),
+                                   k_ring_dist=1):
+    """Compute routes at multiple risk thresholds and rank them.
+
+    For each percentile the full graph is rebuilt from safe cells, and the
+    shortest path is attempted.  Successful routes are ranked by a combined
+    score of risk-threshold rank (lower threshold = stricter = better) and
+    route-length rank (shorter = better).  The route with the lowest combined
+    rank is flagged as recommended.
+
+    Returns
+    -------
+    list[dict]
+        One dict per *successful* route with keys: percentile, threshold_value,
+        cells, coords, route_length_km, risk_threshold_rank, route_length_rank,
+        combined_rank, recommended.  Empty list if no routes were found.
+    """
+    successful_routes = []
+    for pct in percentile_list:
+        threshold_value = float(np.percentile(assessment_df["cum_score"], pct))
+        route = compute_safe_route(assessment_df, origin_hex, dest_hex, pct, k_ring_dist)
+        if route is not None:
+            route_line = ShapelyLineString(route["coords"])
+            route_gdf = gpd.GeoDataFrame(geometry=[route_line], crs=4326).to_crs(27700)
+            length_km = round(route_gdf.geometry.iloc[0].length / 1000, 2)
+            successful_routes.append({
+                "percentile": pct,
+                "threshold_value": threshold_value,
+                "cells": route["cells"],
+                "coords": route["coords"],
+                "route_length_km": length_km,
+            })
+
+    if not successful_routes:
+        return []
+
+    # Rank — lower rank number = better
+    thresholds = [r["threshold_value"] for r in successful_routes]
+    lengths = [r["route_length_km"] for r in successful_routes]
+
+    # Rank thresholds ascending (lower threshold = stricter = rank 1)
+    thresh_sorted = sorted(set(thresholds))
+    thresh_rank_map = {v: i + 1 for i, v in enumerate(thresh_sorted)}
+
+    # Rank lengths ascending (shorter = rank 1)
+    len_sorted = sorted(set(lengths))
+    len_rank_map = {v: i + 1 for i, v in enumerate(len_sorted)}
+
+    for r in successful_routes:
+        r["risk_threshold_rank"] = thresh_rank_map[r["threshold_value"]]
+        r["route_length_rank"] = len_rank_map[r["route_length_km"]]
+        r["combined_rank"] = r["risk_threshold_rank"] + r["route_length_rank"]
+        r["recommended"] = False
+
+    score_sorted = sorted(r["combined_rank"] for r in successful_routes)
+    score_rank_map = {}
+    for i, v in enumerate(score_sorted):
+        if v not in score_rank_map:
+            score_rank_map[v] = i + 1
+    for r in successful_routes:
+        r["combined_rank"] = score_rank_map[r["combined_rank"]]
+
+    best_rank = min(r["combined_rank"] for r in successful_routes)
+    for r in successful_routes:
+        if r["combined_rank"] == best_rank:
+            r["recommended"] = True
+            break  # only one recommended
+
+    return successful_routes
+
+
+def _parse_pathfinder_response(routes_gdf_json: str) -> list:
+    """Adapt the /eikon_safest_route_pathfinder response to the routes list format.
+
+    The endpoint returns a JSON string where geometry is WKT in EPSG:27700 (metres).
+    This function parses the WKT, reprojects to WGS84, and returns a list of dicts
+    matching the shape expected by the BVLOS rendering code.
+    """
+    from shapely import wkt as shapely_wkt
+    import io
+    df = pd.read_json(io.StringIO(routes_gdf_json))
+    geoms_27700 = df["geometry"].apply(shapely_wkt.loads)
+    gdf = gpd.GeoDataFrame(df, geometry=geoms_27700, crs=27700).to_crs(4326)
+
+    # Pick exactly one recommended route: lowest combined_total_rank,
+    # ties broken by lowest risk_threshold (stricter is preferred).
+    gdf_sorted = gdf.sort_values(["combined_total_rank", "risk_threshold"])
+    recommended_idx = gdf_sorted.index[0] if len(gdf_sorted) else None
+
+    routes = []
+    for idx, row in gdf.iterrows():
+        coords = list(row.geometry.coords)
+        routes.append({
+            "percentile":          int(row["risk_threshold"]),
+            "threshold_value":     float(row["cut_off_threshold"]),
+            "cells":               [],
+            "coords":              coords,
+            "route_length_km":     round(float(row["route_length"]) / 1000, 2),
+            "risk_threshold_rank": int(row["risk_threshold_rank"]),
+            "route_length_rank":   int(row["route_length_rank"]),
+            "combined_rank":       int(row["combined_total_rank"]),
+            "recommended":         bool(idx == recommended_idx),
+        })
+    return sorted(routes, key=lambda r: r["combined_rank"])
+
+
+def compute_corridor_summary(assessment_df, routes):
+    """Compute summary statistics for the corridor assessment.
+
+    Parameters
+    ----------
+    assessment_df : DataFrame
+        Full corridor assessment results.
+    routes : list[dict]
+        Output of ``compute_multi_threshold_routes()``.
+    """
+    # H3 resolution-9 cell area is ~0.1053 km² (h3.hex_area(9, 'm^2') ≈ 105332)
+    area_km2 = round(len(assessment_df) * 0.1053, 2)
     summary = {
         "total_cells": len(assessment_df),
-        "high_risk_count": len(high_risk),
-        "low_risk_count": len(assessment_df) - len(high_risk),
+        "area_km2": area_km2,
         "mean_score": float(assessment_df["cum_score"].mean()),
         "max_score": float(assessment_df["cum_score"].max()),
         "min_score": float(assessment_df["cum_score"].min()),
-        "threshold_value": float(threshold),
+        "routes_found": len(routes),
     }
-    if route_info is not None:
-        coords = route_info["coords"]
-        route_line = ShapelyLineString(coords)
-        route_gdf = gpd.GeoDataFrame(geometry=[route_line], crs=4326).to_crs(27700)
-        summary["route_length_km"] = round(route_gdf.geometry.iloc[0].length / 1000, 2)
-        summary["route_cells_count"] = len(route_info["cells"])
+    recommended = next((r for r in routes if r.get("recommended")), None)
+    if recommended:
+        summary["recommended_length_km"] = recommended["route_length_km"]
+        summary["recommended_threshold"] = recommended["threshold_value"]
+        summary["recommended_percentile"] = recommended["percentile"]
     else:
-        summary["route_length_km"] = None
-        summary["route_cells_count"] = 0
+        summary["recommended_length_km"] = None
+        summary["recommended_threshold"] = None
+        summary["recommended_percentile"] = None
     return summary
+
+
+def rerank_routes(routes, safety_weight=0.5):
+    """Re-rank routes with adjustable safety vs efficiency weighting.
+
+    The individual risk_threshold_rank and route_length_rank are fixed from the
+    initial computation.  This function recalculates the combined_rank using
+    the supplied weighting and updates the recommended flag accordingly.
+
+    Parameters
+    ----------
+    routes : list[dict]
+        Routes from ``compute_multi_threshold_routes()``.
+    safety_weight : float
+        0.0 = pure efficiency (shortest route wins),
+        1.0 = pure safety (lowest risk threshold wins).
+        Default 0.5 = equal weight.
+    """
+    if not routes:
+        return routes
+    efficiency_weight = 1.0 - safety_weight
+    for r in routes:
+        r["combined_rank"] = round(
+            safety_weight * r["risk_threshold_rank"]
+            + efficiency_weight * r["route_length_rank"], 3)
+        r["recommended"] = False
+
+    score_sorted = sorted(r["combined_rank"] for r in routes)
+    score_rank_map = {}
+    for i, v in enumerate(score_sorted):
+        if v not in score_rank_map:
+            score_rank_map[v] = i + 1
+    for r in routes:
+        r["combined_rank"] = score_rank_map[r["combined_rank"]]
+
+    best_rank = min(r["combined_rank"] for r in routes)
+    for r in routes:
+        if r["combined_rank"] == best_rank:
+            r["recommended"] = True
+            break
+    return routes
 
 
 def risk_score_to_color(score, max_score=1.0):
@@ -1319,13 +1646,63 @@ def risk_score_to_color(score, max_score=1.0):
     r = int(59 + (180 - 59) * t)
     g = int(76 + (4 - 76) * t)
     b = int(192 + (38 - 192) * t)
-    return [r, g, b, 180]
+    return [r, g, b, 255]
+
+
+def classify_risk_scores(scores: pd.Series, k: int = 5):
+    """Classify risk scores into discrete bins using Natural Breaks (Fisher-Jenks).
+
+    Returns
+    -------
+    class_labels : np.ndarray
+        Integer class label (0..k_actual-1) for each input score.
+    bin_edges : np.ndarray
+        Upper boundary of each class (length k_actual).
+    k_actual : int
+        Number of classes actually produced (may be < k).
+    class_colors : list[list[int]]
+        RGBA color for each class, indexed by class label.
+    """
+    import warnings
+
+    values = scores.values.astype(float)
+    n_unique = len(np.unique(values))
+
+    # Edge case: all values identical (including all-zero)
+    if n_unique <= 1:
+        max_val = max(float(values.max()), 0.01)
+        single_color = risk_score_to_color(float(values.max()), max_val)
+        return (
+            np.zeros(len(values), dtype=int),
+            np.array([float(values.max())]),
+            1,
+            [single_color],
+        )
+
+    k_use = min(k, n_unique)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        classifier = mapclassify.NaturalBreaks(values, k=k_use)
+
+    k_actual = classifier.k
+    bin_edges = classifier.bins
+    class_labels = classifier.yb
+
+    # Generate one color per class, evenly spaced across blue→red palette
+    max_score = max(float(values.max()), 0.01)
+    class_colors = []
+    for i in range(k_actual):
+        t = i / (k_actual - 1) if k_actual > 1 else 0.0
+        class_colors.append(risk_score_to_color(t * max_score, max_score))
+
+    return class_labels, bin_edges, k_actual, class_colors
 
 
 # Mock data generators for demo mode
 
 def _generate_mock_drone_corridor_results(origin_coords, dest_coords, buffer_metres, resolution,
-                                          threshold_percentile, k_ring_dist):
+                                          k_ring_dist):
     """Generate mock drone corridor assessment data for demo mode.
 
     All geometric operations run locally; only the API scores are synthesised.
@@ -1356,15 +1733,18 @@ def _generate_mock_drone_corridor_results(origin_coords, dest_coords, buffer_met
     origin_hex = h3.geo_to_h3(origin_coords[0], origin_coords[1], 7)
     dest_hex = h3.geo_to_h3(dest_coords[0], dest_coords[1], 7)
 
-    route_info = compute_safe_route(assessment_df, origin_hex, dest_hex,
-                                    threshold_percentile, k_ring_dist)
-    summary = compute_corridor_summary(assessment_df, route_info, threshold_percentile)
+    routes = compute_multi_threshold_routes(assessment_df, origin_hex, dest_hex,
+                                            k_ring_dist=k_ring_dist)
+    summary = compute_corridor_summary(assessment_df, routes)
 
     return {
         "assessment_df": assessment_df,
-        "route_info": route_info,
+        "routes": routes,
         "summary": summary,
         "corridor_polygon": corridor_poly,
+        "origin_coords": origin_coords,
+        "dest_coords": dest_coords,
+        "export_geom_lookup": {},
     }
 
 
@@ -3743,8 +4123,9 @@ def render_drone_corridor_tab():
 
     col_input, col_results = st.columns([1, 2])
 
-    # ---- INPUT COLUMN ----
-    with col_input:
+    # ---- INPUT FRAGMENT ----
+    @st.fragment
+    def _input_fragment():
         st.subheader("Origin & Destination")
         input_method = st.radio(
             "Input method",
@@ -3756,17 +4137,17 @@ def render_drone_corridor_tab():
         if input_method == "Coordinates":
             o_col1, o_col2 = st.columns(2)
             with o_col1:
-                orig_lat = st.number_input("Origin Latitude", value=51.36, format="%.6f",
+                orig_lat = st.number_input("Origin Latitude", value=51.47669, format="%.6f",
                                            min_value=-90.0, max_value=90.0, key="drone_orig_lat")
             with o_col2:
-                orig_lon = st.number_input("Origin Longitude", value=0.09, format="%.6f",
+                orig_lon = st.number_input("Origin Longitude", value=-0.445234, format="%.6f",
                                            min_value=-180.0, max_value=180.0, key="drone_orig_lon")
             d_col1, d_col2 = st.columns(2)
             with d_col1:
-                dest_lat = st.number_input("Destination Latitude", value=51.33, format="%.6f",
+                dest_lat = st.number_input("Destination Latitude", value=51.332121, format="%.6f",
                                            min_value=-90.0, max_value=90.0, key="drone_dest_lat")
             with d_col2:
-                dest_lon = st.number_input("Destination Longitude", value=0.04, format="%.6f",
+                dest_lon = st.number_input("Destination Longitude", value=0.031690, format="%.6f",
                                            min_value=-180.0, max_value=180.0, key="drone_dest_lon")
             origin_coords = (orig_lat, orig_lon)
             dest_coords = (dest_lat, dest_lon)
@@ -3784,16 +4165,23 @@ def render_drone_corridor_tab():
 
         st.markdown("---")
         st.subheader("Corridor Parameters")
-        buffer_km = st.slider("Buffer Width (km)", min_value=1.0, max_value=25.0,
+        buffer_km = st.slider("Buffer Width (km)", min_value=1.0, max_value=12.0,
                               value=7.5, step=0.5, key="drone_buffer_km")
         buffer_metres = int(buffer_km * 1000)
 
-        h3_resolution = st.select_slider("H3 Resolution", options=[7, 8, 9], value=9,
-                                         key="drone_h3_res")
-        threshold_pct = st.slider("Risk Threshold Percentile", min_value=50, max_value=99,
-                                  value=80, key="drone_threshold_pct")
-        k_ring = st.slider("K-Ring Distance (routing)", min_value=1, max_value=5,
-                           value=2, key="drone_kring")
+        h3_resolution = 9
+        # H3 res-9 mean edge length ≈ 174 m (approximate radius from hex centroid to vertex).
+        # 1 k-ring step ≈ one edge length away from the destination hex centroid.
+        H9_EDGE_M = 174
+        _kring_distance_label = st.select_slider(
+            "Acceptable Landing Distance from Destination",
+            options=[f"{i * H9_EDGE_M} m" for i in range(0, 6)],
+            value=f"{2 * H9_EDGE_M} m",
+            key="drone_kring",
+        )
+        _kring_metres = int(_kring_distance_label.split()[0])
+        k_ring = _kring_metres // H9_EDGE_M if _kring_metres else 0
+        st.caption("Routes are computed at the 99th, 90th, 80th, 70th and 60th percentile thresholds and ranked automatically.")
 
         st.markdown("---")
         st.subheader("Assessment Criteria")
@@ -3811,9 +4199,20 @@ def render_drone_corridor_tab():
             if val.strip():
                 criteria_values.append(val.strip())
 
-        if st.button("Add criterion", key="drone_add_criterion"):
+        def _add_criterion():
             st.session_state.drone_criteria_count += 1
-            st.rerun()
+
+        def _delete_criterion():
+            st.session_state.drone_criteria_count -= 1
+
+        count = st.session_state.drone_criteria_count
+        btn_cols = st.columns([2, 3, 2])
+        with btn_cols[0]:
+            if count < 10:
+                st.button("Add criterion", key="drone_add_criterion", on_click=_add_criterion, use_container_width=True)
+        with btn_cols[2]:
+            if count > 1:
+                st.button("Delete criterion", key="drone_delete_criterion", on_click=_delete_criterion, use_container_width=True)
 
         if not criteria_values:
             st.warning("Please provide at least one assessment criterion.")
@@ -3821,14 +4220,55 @@ def render_drone_corridor_tab():
         st.markdown("---")
 
         # --- RUN BUTTON ---
-        run_btn = st.button("Assess Corridor", type="primary",
-                            use_container_width=True, key="drone_run")
+        assessment_in_progress = st.session_state.get(
+            "drone_assessment_in_progress", False)
 
-        if run_btn and criteria_values:
+        def _trigger_corridor_run():
+            if st.session_state.get("drone_assessment_in_progress", False):
+                return
+            st.session_state.drone_run_requested = True
+
+        st.button("Assess Corridor", type="primary",
+                  use_container_width=True, key="drone_run",
+                  on_click=_trigger_corridor_run,
+                  disabled=assessment_in_progress)
+
+        if st.session_state.pop("drone_run_requested", False) and criteria_values \
+                and not st.session_state.get("drone_assessment_in_progress", False):
+            st.session_state.drone_assessment_in_progress = True
             if origin_coords == dest_coords:
                 st.error("Origin and destination must be different locations.")
             else:
-                with st.spinner("Generating corridor and assessing risk — this may take several minutes for large corridors..."):
+                need_app_rerun = False
+                st.markdown(
+                    """
+                    <style>
+                    /* Orange tint behind the in-progress status header (the summary line with the spinner) */
+                    div[data-testid="stStatusWidget"] > details > summary,
+                    div[data-testid="stStatus"] > details > summary,
+                    details[data-testid="stExpander"] > summary {
+                        background-color: rgba(255, 140, 0, 0.18) !important;
+                        border-radius: 8px !important;
+                        padding: 8px 12px !important;
+                    }
+                    /* Class added inline below to mark a step as complete */
+                    .corridor-step-complete {
+                        background-color: rgba(46, 204, 113, 0.20) !important;
+                        border: 1px solid rgba(46, 204, 113, 0.55) !important;
+                        border-radius: 8px !important;
+                        padding: 10px 14px !important;
+                        margin: 6px 0 !important;
+                        color: #0b5e2a !important;
+                        font-weight: 600 !important;
+                    }
+                    .corridor-step-complete * {
+                        color: #0b5e2a !important;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                with st.status("Part 1 of 2: Running corridor risk assessment — this may take several minutes for large corridors...", expanded=True) as _status:
                     try:
                         if EIKON_AVAILABLE and st.session_state.api_key:
                             # ---- LIVE MODE ----
@@ -3838,6 +4278,7 @@ def render_drone_corridor_tab():
 
                             if not h9_cells:
                                 st.error("No H3 cells found in the corridor. Try increasing the buffer width.")
+                                _status.update(label="Assessment aborted — no H3 cells.", state="error")
                             else:
                                 if len(h9_cells) > 15000:
                                     st.warning(f"Large corridor: {len(h9_cells):,} cells. Assessment may take 5+ minutes.")
@@ -3845,77 +4286,435 @@ def render_drone_corridor_tab():
                                 assessment_df = run_corridor_assessment(
                                     st.session_state.api_key, h9_cells, criteria_values)
 
+                                if isinstance(assessment_df, str):
+                                    st.error(assessment_df)
+                                    _status.update(label="Assessment failed during risk scoring.", state="error")
+                                    st.stop()
+
+                                st.markdown(
+                                    '<div class="corridor-step-complete">Part 1 of 2 complete: risk assessment finished.</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                _status.update(label="Part 2 of 2: Identifying the safest routes through the corridor...", state="running")
+
                                 origin_hex = h3.geo_to_h3(origin_coords[0], origin_coords[1], 7)
                                 dest_hex = h3.geo_to_h3(dest_coords[0], dest_coords[1], 7)
 
-                                route_info = compute_safe_route(
-                                    assessment_df, origin_hex, dest_hex,
-                                    threshold_pct, k_ring)
+                                import requests as _req
+                                _resp = _req.post(
+                                    "http://slugai.pagekite.me/eikon_safest_route_pathfinder",
+                                    json={
+                                        "origin": origin_hex,
+                                        "orig": origin_hex,
+                                        "dest": dest_hex,
+                                        "risk_assessment_df": assessment_df.to_dict("records"),  # list of dicts → pd.DataFrame() on server
+                                        "kring_constraint": k_ring,
+                                        "api_key": st.session_state.api_key,
+                                    },
+                                    timeout=1200,
+                                )
+                                _resp.raise_for_status()
+                                routes = _parse_pathfinder_response(_resp.json()["routes_gdf"])
                                 summary = compute_corridor_summary(
-                                    assessment_df, route_info, threshold_pct)
+                                    assessment_df, routes)
+
+                                st.markdown(
+                                    f'<div class="corridor-step-complete">Part 2 of 2 complete: {len(routes)} candidate route(s) returned.</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                _status.update(label="Corridor assessment complete.", state="complete")
+
+                                # Precompute export table with CRS transforms (expensive, do once)
+                                export_rows = []
+                                for r in routes:
+                                    line_wgs84 = ShapelyLineString(r["coords"])
+                                    line_27700 = gpd.GeoDataFrame(
+                                        geometry=[line_wgs84], crs=4326
+                                    ).to_crs(27700).geometry.iloc[0]
+                                    export_rows.append({
+                                        "route_key": r["percentile"],
+                                        "Geometry (WKT)": line_27700.wkt,
+                                    })
+                                export_geom_lookup = {row["route_key"]: row["Geometry (WKT)"] for row in export_rows}
 
                                 st.session_state.drone_corridor_results = {
                                     "assessment_df": assessment_df,
-                                    "route_info": route_info,
+                                    "routes": routes,
                                     "summary": summary,
                                     "corridor_polygon": corridor_poly,
+                                    "export_geom_lookup": export_geom_lookup,
+                                    "origin_coords": origin_coords,
+                                    "dest_coords": dest_coords,
                                 }
                                 st.success("Corridor assessment complete!")
+                                need_app_rerun = True
                         else:
                             # ---- DEMO MODE ----
                             results = _generate_mock_drone_corridor_results(
                                 origin_coords, dest_coords, buffer_metres,
-                                h3_resolution, threshold_pct, k_ring)
+                                h3_resolution, k_ring)
                             st.session_state.drone_corridor_results = results
                             st.success("Demo assessment complete (mock data).")
+                            need_app_rerun = True
                     except Exception as exc:
                         st.error(f"Assessment failed: {exc}")
+                # Clear the in-flight guard before any rerun so the button
+                # re-enables and a new assessment can be requested.
+                st.session_state.drone_assessment_in_progress = False
+                # Trigger full app rerun so the results fragment picks up new data
+                if need_app_rerun:
+                    st.rerun(scope="app")
 
-    # ---- RESULTS COLUMN ----
-    with col_results:
+    # ---- RESULTS FRAGMENT ----
+    @st.fragment
+    def _results_fragment():
         if st.session_state.drone_corridor_results is None:
             st.info("Configure parameters on the left and click **Assess Corridor** to begin.")
             return
 
         data = st.session_state.drone_corridor_results
+        # Invalidate stale results from a previous code version
+        if "routes" not in data or "area_km2" not in data.get("summary", {}):
+            st.session_state.drone_corridor_results = None
+            st.info("Previous results are stale. Please re-run the assessment.")
+            return
         assessment_df = data["assessment_df"]
-        route_info = data["route_info"]
+        routes = data["routes"]
         summary = data["summary"]
         corridor_poly = data["corridor_polygon"]
 
-        # Summary metrics row
+        result_origin = data["origin_coords"]
+        result_dest = data["dest_coords"]
+
+        # Reduce metric font sizes so text doesn't clip
+        st.markdown("""<style>
+        [data-testid="stMetric"] label { font-size: 0.8rem !important; }
+        [data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
+        </style>""", unsafe_allow_html=True)
+
+        # Route priority slider — re-rank routes based on user preference
+        if routes:
+            sl_left, sl_mid, sl_right = st.columns([1, 3, 1])
+            sl_left.markdown("**Shortest**")
+            with sl_mid:
+                safety_weight = st.slider(
+                    "Route Priority",
+                    min_value=0.0, max_value=1.0, value=0.5, step=0.05,
+                    help="Slide left to prioritise shorter routes, slide right to prioritise safer (lower risk) routes.",
+                    label_visibility="collapsed",
+                    key="drone_safety_weight",
+                )
+            sl_right.markdown("**Safest**")
+            rerank_routes(routes, safety_weight)
+
+        # Summary metrics row (reflects current ranking)
+        recommended = next((r for r in routes if r.get("recommended")), None) if routes else None
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Cells", f"{summary['total_cells']:,}")
-        m2.metric("High Risk",
-                  f"{summary['high_risk_count']:,}",
-                  f"{summary['high_risk_count'] / max(summary['total_cells'], 1) * 100:.0f}%")
-        if summary["route_length_km"] is not None:
-            m3.metric("Route Length", f"{summary['route_length_km']} km")
+        m1.metric("Corridor Area", f"{summary['area_km2']} km\u00b2")
+        m2.metric("Routes Found", f"{summary['routes_found']}")
+        if recommended is not None:
+            m3.metric("Best Route", f"{recommended['route_length_km']} km")
         else:
-            m3.metric("Route Length", "N/A")
-        m4.metric("Threshold", f"{summary['threshold_value']:.3f}")
+            m3.metric("Best Route", "N/A")
+        if recommended is not None:
+            m4.metric("Best Threshold", f"{recommended['percentile']}th percentile")
+        else:
+            m4.metric("Best Threshold", "N/A")
+
+        def _format_bvlos_objects_tooltip_html(objects_payload: Any) -> str:
+            """Format BVLOS object detections for a styled pydeck tooltip."""
+            if objects_payload is None:
+                return (
+                    "<div style='margin-top: 10px;'>Objects:</div>"
+                    "<div style='margin-left: 14px; font-size: 0.88em;'>None</div>"
+                )
+            if not isinstance(objects_payload, (str, dict, list, tuple)):
+                try:
+                    if pd.isna(objects_payload):
+                        return (
+                            "<div style='margin-top: 10px;'>Objects:</div>"
+                            "<div style='margin-left: 14px; font-size: 0.88em;'>None</div>"
+                        )
+                except (TypeError, ValueError):
+                    pass
+
+            parsed_payload = objects_payload
+            if isinstance(objects_payload, str):
+                stripped_payload = objects_payload.strip()
+                if not stripped_payload:
+                    return (
+                        "<div style='margin-top: 10px;'>Objects:</div>"
+                        "<div style='margin-left: 14px; font-size: 0.88em;'>None</div>"
+                    )
+                try:
+                    parsed_payload = json.loads(stripped_payload)
+                except json.JSONDecodeError:
+                    return (
+                        "<div style='margin-top: 10px;'>Objects:</div>"
+                        "<div style='margin-left: 14px; font-size: 0.88em;'>None</div>"
+                    )
+
+            def _format_label(label: Any) -> str:
+                return str(label).replace("_", " ").strip().title()
+
+            def _format_percent(value: Any) -> Optional[str]:
+                if value is None:
+                    return None
+                raw_value = str(value).strip()
+                if not raw_value:
+                    return None
+                if raw_value.endswith("%"):
+                    raw_value = raw_value[:-1].strip()
+                try:
+                    return f"{float(raw_value):.2f}%"
+                except ValueError:
+                    return None
+
+            object_lines: List[str] = []
+            if isinstance(parsed_payload, dict):
+                for obj_name, obj_value in parsed_payload.items():
+                    formatted_percent = _format_percent(obj_value)
+                    if formatted_percent is None:
+                        continue
+                    object_lines.append(
+                        "<div style='margin-left: 14px; font-size: 0.88em; line-height: 1.35;'>"
+                        f"{html.escape(_format_label(obj_name))}: {html.escape(formatted_percent)}"
+                        "</div>"
+                    )
+            elif isinstance(parsed_payload, list):
+                for item in parsed_payload:
+                    if not isinstance(item, dict):
+                        continue
+                    obj_name = item.get("name") or item.get("Object")
+                    obj_value = item.get(
+                        "proportion_of_area_that_is_label",
+                        item.get("coverage")
+                    )
+                    formatted_percent = _format_percent(obj_value)
+                    if not obj_name or formatted_percent is None:
+                        continue
+                    object_lines.append(
+                        "<div style='margin-left: 14px; font-size: 0.88em; line-height: 1.35;'>"
+                        f"{html.escape(_format_label(obj_name))}: {html.escape(formatted_percent)}"
+                        "</div>"
+                    )
+            else:
+                return (
+                    "<div style='margin-top: 10px;'>Objects:</div>"
+                    "<div style='margin-left: 14px; font-size: 0.88em;'>None</div>"
+                )
+
+            if not object_lines:
+                object_lines.append(
+                    "<div style='margin-left: 14px; font-size: 0.88em;'>None</div>"
+                )
+
+            return (
+                "<div style='margin-top: 10px;'>Objects:</div>"
+                + "".join(object_lines)
+            )
+
+        def _build_bvlos_tooltip_html(
+            tooltip_line1: Any,
+            tooltip_line2: Any,
+            objects_payload: Any
+        ) -> str:
+            return (
+                f"<div style='margin-bottom: 10px;'>{html.escape(str(tooltip_line1))}</div>"
+                f"<div style='margin-bottom: 10px;'>{html.escape(str(tooltip_line2))}</div>"
+                f"{_format_bvlos_objects_tooltip_html(objects_payload)}"
+            )
+
+        def _build_basic_tooltip_html(tooltip_line1: Any, tooltip_line2: Any) -> str:
+            return (
+                f"<div style='margin-bottom: 10px;'>{html.escape(str(tooltip_line1))}</div>"
+                f"<div>{html.escape(str(tooltip_line2))}</div>"
+            )
+
+        def _render_bvlos_map_legend(
+            max_risk_score: float,
+            include_route_keys: bool = False,
+            bin_edges: Optional[np.ndarray] = None,
+            k_actual: int = 0,
+            class_colors: Optional[list] = None,
+        ) -> None:
+            def _css_rgb(color: List[int]) -> str:
+                return f"rgb({color[0]}, {color[1]}, {color[2]})"
+
+            route_keys_html = ""
+            if include_route_keys:
+                route_keys_html = (
+                    "<div style='margin-top: 10px; padding-top: 10px; border-top: 1px solid #d7dde7;'>"
+                    "<div style='font-size: 0.76rem; font-weight: 600; color: #3a4760; margin-bottom: 6px;'>Routes</div>"
+                    "<div style='display: flex; align-items: center; gap: 8px; margin-bottom: 6px;'>"
+                    "<span style='width: 18px; height: 4px; border-radius: 999px; background: rgb(0, 128, 128); display: inline-block;'></span>"
+                    "<span style='font-size: 0.75rem; color: #526079;'>Recommended</span>"
+                    "</div>"
+                    "<div style='display: flex; align-items: center; gap: 8px;'>"
+                    "<span style='width: 18px; height: 4px; border-radius: 999px; background: rgb(255, 165, 0); display: inline-block;'></span>"
+                    "<span style='font-size: 0.75rem; color: #526079;'>Alternative</span>"
+                    "</div>"
+                    "</div>"
+                )
+
+            # Discrete classified legend (Natural Breaks)
+            if bin_edges is not None and class_colors and k_actual > 0:
+                swatch_rows = []
+                for i in reversed(range(k_actual)):
+                    lower = 0.0 if i == 0 else bin_edges[i - 1]
+                    upper = bin_edges[i]
+                    color_css = _css_rgb(class_colors[i])
+                    swatch_rows.append(
+                        f"<div style='display: flex; align-items: center; gap: 8px; margin-bottom: 4px;'>"
+                        f"<span style='width: 18px; height: 14px; border-radius: 3px; "
+                        f"background: {color_css}; display: inline-block; opacity: 0.85;'></span>"
+                        f"<span style='font-size: 0.73rem; color: #526079;'>"
+                        f"{lower:.3f} &ndash; {upper:.3f}</span>"
+                        f"</div>"
+                    )
+                swatches_html = "".join(swatch_rows)
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        background: rgba(255, 255, 255, 0.96);
+                        border: 1px solid #d7dde7;
+                        border-radius: 12px;
+                        padding: 12px 12px 10px;
+                        box-shadow: 0 8px 20px rgba(24, 39, 75, 0.08);
+                        margin-top: 6px;
+                        max-width: 220px;
+                    ">
+                        <div style="font-size: 0.82rem; font-weight: 700; color: #24324a; margin-bottom: 8px;">
+                            Risk Score
+                        </div>
+                        {swatches_html}
+                        {route_keys_html}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                # Fallback: continuous gradient legend
+                gradient_stops = ", ".join([
+                    f"{_css_rgb(risk_score_to_color(max_risk_score * fraction, max_risk_score))} {int(fraction * 100)}%"
+                    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]
+                ])
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        background: rgba(255, 255, 255, 0.96);
+                        border: 1px solid #d7dde7;
+                        border-radius: 12px;
+                        padding: 12px 12px 10px;
+                        box-shadow: 0 8px 20px rgba(24, 39, 75, 0.08);
+                        margin-top: 6px;
+                        max-width: 220px;
+                    ">
+                        <div style="font-size: 0.82rem; font-weight: 700; color: #24324a; margin-bottom: 8px;">
+                            Risk Score
+                        </div>
+                        <div style="
+                            height: 10px;
+                            border-radius: 999px;
+                            background: linear-gradient(90deg, {gradient_stops});
+                            margin-bottom: 6px;
+                        "></div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.74rem; color: #526079;">
+                            <span>Low</span>
+                            <span>High</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #7b879b; margin-top: 2px;">
+                            <span>0.000</span>
+                            <span>{max_risk_score:.3f}</span>
+                        </div>
+                        {route_keys_html}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
         # Prepare common map data
         max_score = max(assessment_df["cum_score"].max(), 0.01)
-        hex_df = assessment_df[["h3_index_9", "cum_score"]].copy()
+        hex_df = assessment_df[["h3_index_9", "cum_score","objects_detected"]].copy()
         hex_df = hex_df.rename(columns={"h3_index_9": "h3_index"})
-        hex_df["color"] = hex_df["cum_score"].apply(
-            lambda s: risk_score_to_color(s, max_score))
 
+        # Classify risk scores into discrete bins for consistent coloring
+        if MAPCLASSIFY_AVAILABLE:
+            class_labels, bin_edges, k_actual, class_colors = classify_risk_scores(
+                hex_df["cum_score"], k=5
+            )
+            hex_df["color"] = [class_colors[label] for label in class_labels]
+        else:
+            bin_edges = None
+            k_actual = 0
+            class_colors = []
+            hex_df["color"] = hex_df["cum_score"].apply(
+                lambda s: risk_score_to_color(s, max_score))
+        hex_df["tooltip_line1"] = "Hex: " + hex_df["h3_index"]
+        hex_df["tooltip_line2"] = "Risk: " + hex_df["cum_score"].apply(lambda s: f"{s:.3f}")
+        hex_df["tooltip_html"] = hex_df.apply(
+            lambda row: _build_bvlos_tooltip_html(
+                row["tooltip_line1"],
+                row["tooltip_line2"],
+                row["objects_detected"],
+            ),
+            axis=1,
+        )
         # Origin / destination markers
         markers = pd.DataFrame([
-            {"lat": origin_coords[0], "lon": origin_coords[1],
-             "color": [0, 200, 0, 220], "label": "Origin"},
-            {"lat": dest_coords[0], "lon": dest_coords[1],
-             "color": [200, 0, 0, 220], "label": "Destination"},
+            {"lat": result_origin[0], "lon": result_origin[1],
+             "color": [0, 200, 0, 220], "label": "Origin",
+             "tooltip_line1": "Origin marker",
+             "tooltip_line2": f"Lat: {result_origin[0]:.5f}, Lon: {result_origin[1]:.5f}"},
+            {"lat": result_dest[0], "lon": result_dest[1],
+             "color": [255, 215, 0, 240], "label": "Destination",
+             "tooltip_line1": "Destination marker",
+             "tooltip_line2": f"Lat: {result_dest[0]:.5f}, Lon: {result_dest[1]:.5f}"},
         ])
+        markers["tooltip_html"] = markers.apply(
+            lambda row: _build_basic_tooltip_html(
+                row["tooltip_line1"],
+                row["tooltip_line2"],
+            ),
+            axis=1,
+        )
 
-        mid_lat = (origin_coords[0] + dest_coords[0]) / 2
-        mid_lon = (origin_coords[1] + dest_coords[1]) / 2
+        def _get_bvlos_zoom_level(
+            corridor_geometry: Any,
+            origin_coords: Tuple[float, float],
+            dest_coords: Tuple[float, float]
+        ) -> int:
+            if corridor_geometry is not None and hasattr(corridor_geometry, "bounds"):
+                min_lon, min_lat, max_lon, max_lat = corridor_geometry.bounds
+                max_distance = (max_lat - min_lat) + (max_lon - min_lon)
+            else:
+                max_distance = (
+                    abs(origin_coords[0] - dest_coords[0])
+                    + abs(origin_coords[1] - dest_coords[1])
+                )
 
-        view = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=11, pitch=0)
+            if max_distance > 0.2:
+                radius = 2000
+            elif max_distance > 0.1:
+                radius = 1000
+            else:
+                radius = 500
 
-        # Layers shared across sub-tabs
+            if radius == 2000:
+                return 8
+            if radius == 1000:
+                return 9
+            return 10
+
+        mid_lat = (result_origin[0] + result_dest[0]) / 2
+        mid_lon = (result_origin[1] + result_dest[1]) / 2
+        zoom_level = _get_bvlos_zoom_level(corridor_poly, result_origin, result_dest)
+
+        view = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=zoom_level, pitch=0)
+
+        # Hex layer shared across sub-tabs
         hex_layer = pdk.Layer(
             "H3HexagonLayer",
             data=hex_df,
@@ -3925,9 +4724,8 @@ def render_drone_corridor_tab():
             line_width_min_pixels=1,
             pickable=True,
             extruded=False,
-            opacity=0.7,
+            opacity=0.85,
             stroked=False,
-
         )
         marker_layer = pdk.Layer(
             "ScatterplotLayer",
@@ -3938,60 +4736,224 @@ def render_drone_corridor_tab():
             pickable=True,
         )
 
+        # Basemap state
+        if "bvlos_basemap" not in st.session_state:
+            st.session_state.bvlos_basemap = "Dark"
+
+        _ARCGIS_SATELLITE_STYLE = "https://raw.githubusercontent.com/go2garret/maps/main/src/assets/json/arcgis_hybrid.json"
+
+        def _bvlos_map_style():
+            """Return the map_style string for the active basemap."""
+            choice = st.session_state.bvlos_basemap
+            if choice == "Light":
+                return "light"
+            elif choice == "Satellite":
+                return _ARCGIS_SATELLITE_STYLE
+            return "dark"
+
+        def _render_basemap_buttons(suffix: str) -> None:
+            st.markdown(
+                "<div style='font-size: 0.82rem; font-weight: 700; color: #24324a; "
+                "margin-top: 16px; margin-bottom: 8px;'>Basemap</div>",
+                unsafe_allow_html=True,
+            )
+            for option in ["Dark", "Light", "Satellite"]:
+                is_active = st.session_state.bvlos_basemap == option
+                st.button(
+                    option,
+                    key=f"bvlos_bm_{option}_{suffix}",
+                    type="primary" if is_active else "secondary",
+                    use_container_width=True,
+                    on_click=lambda o=option: st.session_state.__setitem__("bvlos_basemap", o),
+                )
+
         tab_risk, tab_route, tab_table = st.tabs(["Risk Map", "Route Map", "Data Table"])
 
         with tab_risk:
-            deck = pdk.Deck(
-                layers=[hex_layer, marker_layer],
-                initial_view_state=view,
-                tooltip={"text": "H3: {h3_index}\nRisk: {cum_score}"},
-            )
-            st.pydeck_chart(deck)
-
-        with tab_route:
-            if route_info is not None:
-                path_df = pd.DataFrame([{"path": [list(c) for c in route_info["coords"]]}])
-                route_layer = pdk.Layer(
-                    "PathLayer",
-                    data=path_df,
-                    get_path="path",
-                    get_color=[0, 200, 0, 200],
-                    width_min_pixels=4,
-                    pickable=True,
-                )
-                deck_route = pdk.Deck(
-                    layers=[hex_layer, marker_layer, route_layer],
-                    initial_view_state=view,
-                    tooltip={"text": "H3: {h3_index}\nRisk: {cum_score}"},
-                )
-                st.pydeck_chart(deck_route)
-                st.caption(
-                    f"Optimised route: **{summary['route_cells_count']}** cells, "
-                    f"**{summary['route_length_km']} km**"
-                )
-            else:
-                deck_no_route = pdk.Deck(
+            risk_map_col, risk_legend_col = st.columns([5.5, 1.5], gap="small")
+            with risk_map_col:
+                _ms = _bvlos_map_style()
+                deck = pdk.Deck(
                     layers=[hex_layer, marker_layer],
                     initial_view_state=view,
-                    tooltip={"text": "H3: {h3_index}\nRisk: {cum_score}"},
+                    tooltip={"html": "{tooltip_html}"},
+                    map_style=_ms,
                 )
-                st.pydeck_chart(deck_no_route)
+                st.pydeck_chart(deck)
+            with risk_legend_col:
+                _render_bvlos_map_legend(
+                    max_score,
+                    bin_edges=bin_edges if MAPCLASSIFY_AVAILABLE else None,
+                    k_actual=k_actual,
+                    class_colors=class_colors if MAPCLASSIFY_AVAILABLE else None,
+                )
+                _render_basemap_buttons("risk")
+
+        with tab_route:
+            # Route-map hex layer — pickable with tooltip-friendly columns
+            hex_df_route = hex_df.copy()
+            hex_df_route["tooltip_line1"] = "Hex: " + hex_df_route["h3_index"]
+            hex_df_route["tooltip_line2"] = "Risk: " + hex_df_route["cum_score"].apply(lambda s: f"{s:.3f}")
+            hex_df_route["tooltip_html"] = hex_df_route.apply(
+                lambda row: _build_bvlos_tooltip_html(
+                    row["tooltip_line1"],
+                    row["tooltip_line2"],
+                    row["objects_detected"],
+                ),
+                axis=1,
+            )
+
+            hex_layer_route = pdk.Layer(
+                "H3HexagonLayer",
+                data=hex_df_route,
+                get_hexagon="h3_index",
+                get_fill_color="color",
+                get_line_color=[255, 255, 255, 40],
+                line_width_min_pixels=1,
+                pickable=True,
+                extruded=False,
+                opacity=0.85,
+                stroked=False,
+            )
+
+            if routes:
+                # Build path layers — alternatives first (orange), recommended last (teal) so it renders on top
+                route_layers = []
+                recommended_layer = None
+                for r in routes:
+                    label = "Recommended" if r["recommended"] else "Alternative"
+                    path_data = pd.DataFrame([{
+                        "path": [list(c) for c in r["coords"]],
+                        "tooltip_line1": f"{label} route ({r['percentile']}th percentile)",
+                        "tooltip_line2": f"Threshold: {r['threshold_value']:.3f} | Length: {r['route_length_km']} km",
+                    }])
+                    path_data["tooltip_html"] = path_data.apply(
+                        lambda row: _build_basic_tooltip_html(
+                            row["tooltip_line1"],
+                            row["tooltip_line2"],
+                        ),
+                        axis=1,
+                    )
+                    if r["recommended"]:
+                        recommended_layer = pdk.Layer(
+                            "PathLayer", data=path_data, get_path="path",
+                            get_color=[0, 128, 128, 220],
+                            width_min_pixels=5, pickable=True,
+                        )
+                    else:
+                        layer = pdk.Layer(
+                            "PathLayer", data=path_data, get_path="path",
+                            get_color=[255, 165, 0, 178],
+                            width_min_pixels=3, pickable=True,
+                        )
+                        route_layers.append(layer)
+                if recommended_layer is not None:
+                    route_layers.append(recommended_layer)
+
+                _ms = _bvlos_map_style()
+                deck_route = pdk.Deck(
+                    layers=[hex_layer_route, marker_layer] + route_layers,
+                    initial_view_state=view,
+                    tooltip={"html": "{tooltip_html}"},
+                    map_style=_ms,
+                )
+                route_map_col, route_legend_col = st.columns([5.5, 1.5], gap="small")
+                with route_map_col:
+                    st.pydeck_chart(deck_route)
+                with route_legend_col:
+                    _render_bvlos_map_legend(
+                        max_score,
+                        include_route_keys=True,
+                        bin_edges=bin_edges if MAPCLASSIFY_AVAILABLE else None,
+                        k_actual=k_actual,
+                        class_colors=class_colors if MAPCLASSIFY_AVAILABLE else None,
+                    )
+                    _render_basemap_buttons("route")
+
+                # Route comparison table
+                st.subheader("Route Comparison")
+                comparison_rows = []
+                for r in routes:
+                    comparison_rows.append({
+                        "Percentile": f"{r['percentile']}th",
+                        "Threshold": round(r["threshold_value"], 3),
+                        "Length (km)": r["route_length_km"],
+                        "Cells": len(r["cells"]),
+                        "Safety Rank": r["risk_threshold_rank"],
+                        "Length Rank": r["route_length_rank"],
+                        "Combined Rank": r["combined_rank"],
+                        "Recommended": "Yes" if r["recommended"] else "",
+                    })
+                comparison_df = pd.DataFrame(comparison_rows)
+                st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+            else:
+                _ms = _bvlos_map_style()
+                deck_no_route = pdk.Deck(
+                    layers=[hex_layer_route, marker_layer],
+                    initial_view_state=view,
+                    tooltip={"html": "{tooltip_html}"},
+                    map_style=_ms,
+                )
+                route_map_col, route_legend_col = st.columns([5.5, 1.5], gap="small")
+                with route_map_col:
+                    st.pydeck_chart(deck_no_route)
+                with route_legend_col:
+                    _render_bvlos_map_legend(
+                        max_score,
+                        bin_edges=bin_edges if MAPCLASSIFY_AVAILABLE else None,
+                        k_actual=k_actual,
+                        class_colors=class_colors if MAPCLASSIFY_AVAILABLE else None,
+                    )
+                    _render_basemap_buttons("no_route")
                 st.warning(
-                    "No safe route found between origin and destination at the "
-                    "current risk threshold. Try lowering the threshold percentile "
-                    "or increasing the buffer width / k-ring distance."
+                    "No safe route found at any of the tested risk thresholds "
+                    "(99th, 90th, 80th, 70th, 60th percentile). "
+                    "Try increasing the buffer width or acceptable landing distance from destination."
                 )
 
         with tab_table:
-            display_df = assessment_df.sort_values("cum_score", ascending=False).reset_index(drop=True)
-            st.dataframe(display_df, use_container_width=True)
-            csv = display_df.to_csv(index=False)
-            st.download_button(
-                "Download CSV",
-                data=csv,
-                file_name="drone_corridor_assessment.csv",
-                mime="text/csv",
-            )
+            if routes:
+                # Use precomputed CRS geometries if available, otherwise compute
+                export_geom_lookup = data.get("export_geom_lookup", {})
+                export_rows = []
+                for r in routes:
+                    geom_wkt = export_geom_lookup.get(r["percentile"])
+                    if geom_wkt is None:
+                        line_wgs84 = ShapelyLineString(r["coords"])
+                        line_27700 = gpd.GeoDataFrame(
+                            geometry=[line_wgs84], crs=4326
+                        ).to_crs(27700).geometry.iloc[0]
+                        geom_wkt = line_27700.wkt
+                    export_rows.append({
+                        "Percentile": f"{r['percentile']}th",
+                        "Threshold": round(r["threshold_value"], 3),
+                        "Length (km)": r["route_length_km"],
+                        "Cells": len(r["cells"]),
+                        "Safety Rank": r["risk_threshold_rank"],
+                        "Length Rank": r["route_length_rank"],
+                        "Combined Rank": r["combined_rank"],
+                        "Recommended": "Yes" if r["recommended"] else "No",
+                        "Geometry (WKT)": geom_wkt,
+                    })
+                export_df = pd.DataFrame(export_rows)
+                st.dataframe(export_df.drop(columns=["Geometry (WKT)"]),
+                             use_container_width=True, hide_index=True)
+                csv = export_df.to_csv(index=False)
+                st.download_button(
+                    "Download Routes CSV",
+                    data=csv,
+                    file_name="drone_corridor_routes.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.info("No routes to display.")
+
+    # ---- Wire fragments into column contexts ----
+    with col_input:
+        _input_fragment()
+
+    with col_results:
+        _results_fragment()
 
 
 def render_ai_chat_tab():
@@ -4172,14 +5134,18 @@ def render_ai_chat_tab():
             req = st.session_state.eikon_pending_request
 
             with st.chat_message("assistant", avatar=eikon_animated_avatar):
-                st.markdown("*EIKON is thinking...*")
+                reasoning_status = st.status("EIKON is thinking...", expanded=True, state="running")
+                reasoning_display = reasoning_status.empty()
 
             response = send_chat_message(
                 user_message=req['user_message'],
                 model_cot_history=req['model_cot_history'],
                 conversation_history=req['conversation_history'],
-                api_key=req['api_key']
+                api_key=req['api_key'],
+                reasoning_container=reasoning_display
             )
+
+            reasoning_status.update(label="EIKON has finished thinking", state="complete", expanded=False)
 
             # Clear the pending flag
             del st.session_state.eikon_pending_request
@@ -4461,8 +5427,10 @@ def render_main_app():
         if not EIKON_AVAILABLE:
             st.warning("Demo Mode Active")
 
-    # Credits quota box (top right)
-    credit_balance = get_user_credit_balance(st.session_state.api_key)
+    # Skip the unrelated credit-balance API call on the rerun that launches a BVLOS assessment.
+    credit_balance = None
+    if not st.session_state.get("drone_run_requested", False):
+        credit_balance = get_user_credit_balance(st.session_state.api_key)
     if credit_balance is not None:
         st.markdown(f'''
         <div class="credits-box">
@@ -4475,8 +5443,8 @@ def render_main_app():
     st.markdown('<p class="main-header">EIKON</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Understand your world</p>', unsafe_allow_html=True)
 
-    # Tabs
-    tab_chat, tab_search, tab_context, tab_similarity, tab_portfolio, tab_objects, tab_drone, tab_history, tab_memory, tab_docs = st.tabs([
+    # Top-level navigation: session-backed so reruns stay on the user's selected section.
+    main_tabs = [
         "Eikon AI",
         "Search",
         "Context",
@@ -4487,36 +5455,34 @@ def render_main_app():
         "History",
         "Memory",
         "Docs"
-    ])
+    ]
+    active_main_tab = st.radio(
+        "Main Navigation",
+        options=main_tabs,
+        horizontal=True,
+        key="active_main_tab",
+        label_visibility="collapsed",
+    )
 
-    with tab_chat:
+    if active_main_tab == "Eikon AI":
         render_ai_chat_tab()
-
-    with tab_search:
+    elif active_main_tab == "Search":
         render_search_tab()
-
-    with tab_context:
+    elif active_main_tab == "Context":
         render_context_tab()
-
-    with tab_similarity:
+    elif active_main_tab == "Similarity":
         render_similarity_tab()
-
-    with tab_portfolio:
+    elif active_main_tab == "Portfolio":
         render_portfolio_tab()
-
-    with tab_objects:
+    elif active_main_tab == "Object Detection":
         render_object_detection_tab()
-
-    with tab_drone:
+    elif active_main_tab == "BVLOS Assessment":
         render_drone_corridor_tab()
-
-    with tab_history:
+    elif active_main_tab == "History":
         render_history_tab()
-
-    with tab_memory:
+    elif active_main_tab == "Memory":
         render_memory_tab()
-
-    with tab_docs:
+    elif active_main_tab == "Docs":
         render_docs_tab()
 
 
