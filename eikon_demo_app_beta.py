@@ -684,26 +684,15 @@ def parse_model_thought(thought_text: str) -> Dict[str, str]:
 
 
 def get_chat_reasoning_traces(api_key: str, since_index: int = 0) -> Dict[str, Any]:
-    """Read chat reasoning trace files from disk, returning new ones since since_index."""
-    chat_dir = f"/Users/tariromashongamhende/Local Files/ml_projects/satellite_slug/project_eikon/mapping_tables/user_data_tables/users/{api_key}/chat_thoughts"
-    if not os.path.exists(chat_dir):
-        return {"traces": [], "latest_index": 0, "is_complete": False}
-
-    files = sorted([f for f in os.listdir(chat_dir) if f.startswith("thought_")])
-    traces, is_complete, latest_index = [], False, since_index
-
-    for fname in files:
-        if fname == "thought_final.json":
-            is_complete = True
-        try:
-            with open(os.path.join(chat_dir, fname), "r") as f:
-                trace = json.load(f)
-            if trace.get("index", 0) >= since_index:
-                traces.append(trace)
-                latest_index = max(latest_index, trace.get("index", 0))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"traces": traces, "latest_index": latest_index, "is_complete": is_complete}
+    """Fetch chat reasoning traces from the backend endpoint."""
+    try:
+        payload = {"api_key": api_key, "since_index": since_index}
+        r = requests.post(EIKON_API_ENDPOINTS["chat_reasoning_traces"], json=payload, timeout=10)
+        if r.ok:
+            return r.json()
+    except Exception:
+        pass
+    return {"traces": [], "latest_index": since_index, "is_complete": False}
 
 
 TRACE_TYPE_LABELS = {
@@ -4220,25 +4209,57 @@ def render_drone_corridor_tab():
         st.markdown("---")
 
         # --- RUN BUTTON ---
-        assessment_in_progress = st.session_state.get(
-            "drone_assessment_in_progress", False)
+        # In-flight guard, with a stale-flag escape hatch: if the previous run
+        # crashed in a way that bypassed our flag-clear (e.g. network drop,
+        # st.stop() raising BaseException, browser disconnect), the flag would
+        # otherwise lock the user out of all future requests in this session.
+        DRONE_ASSESSMENT_STALE_AFTER_S = 30 * 60  # 30 minutes
+        _started_at = st.session_state.get("drone_assessment_started_at")
+        _now = time.time()
+        _flag_set = st.session_state.get("drone_assessment_in_progress", False)
+        _flag_stale = (
+            _flag_set and _started_at is not None
+            and (_now - _started_at) > DRONE_ASSESSMENT_STALE_AFTER_S
+        )
+        if _flag_stale:
+            # Auto-recover from a stale lock so the user is never permanently blocked.
+            st.session_state.drone_assessment_in_progress = False
+            st.session_state.pop("drone_assessment_started_at", None)
+            _flag_set = False
+
+        assessment_in_progress = _flag_set
 
         def _trigger_corridor_run():
             if st.session_state.get("drone_assessment_in_progress", False):
                 return
             st.session_state.drone_run_requested = True
 
+        def _reset_corridor_lock():
+            st.session_state.drone_assessment_in_progress = False
+            st.session_state.pop("drone_assessment_started_at", None)
+            st.session_state.pop("drone_run_requested", None)
+
         st.button("Assess Corridor", type="primary",
                   use_container_width=True, key="drone_run",
                   on_click=_trigger_corridor_run,
                   disabled=assessment_in_progress)
 
+        if assessment_in_progress:
+            st.caption(
+                "An assessment is already running. If you believe it has "
+                "crashed (e.g. network dropped), reset it to try again."
+            )
+            st.button("Reset assessment lock", key="drone_reset_lock",
+                      on_click=_reset_corridor_lock, use_container_width=True)
+
         if st.session_state.pop("drone_run_requested", False) and criteria_values \
                 and not st.session_state.get("drone_assessment_in_progress", False):
             st.session_state.drone_assessment_in_progress = True
-            if origin_coords == dest_coords:
+            st.session_state.drone_assessment_started_at = time.time()
+            try:
+              if origin_coords == dest_coords:
                 st.error("Origin and destination must be different locations.")
-            else:
+              else:
                 need_app_rerun = False
                 st.markdown(
                     """
@@ -4287,6 +4308,13 @@ def render_drone_corridor_tab():
                                     st.session_state.api_key, h9_cells, criteria_values)
 
                                 if isinstance(assessment_df, str):
+                                    # Belt-and-suspenders: clear the lock on
+                                    # the error path so the button re-enables
+                                    # even if st.stop()'s StopException
+                                    # somehow doesn't trigger the outer
+                                    # finally.
+                                    st.session_state.drone_assessment_in_progress = False
+                                    st.session_state.pop("drone_assessment_started_at", None)
                                     st.error(assessment_df)
                                     _status.update(label="Assessment failed during risk scoring.", state="error")
                                     st.stop()
@@ -4358,12 +4386,15 @@ def render_drone_corridor_tab():
                             need_app_rerun = True
                     except Exception as exc:
                         st.error(f"Assessment failed: {exc}")
-                # Clear the in-flight guard before any rerun so the button
-                # re-enables and a new assessment can be requested.
+            finally:
+                # Always clear the in-flight guard, even if BaseException
+                # (st.stop, st.rerun, KeyboardInterrupt) propagates out — so
+                # the user is never permanently locked out of new requests.
                 st.session_state.drone_assessment_in_progress = False
-                # Trigger full app rerun so the results fragment picks up new data
-                if need_app_rerun:
-                    st.rerun(scope="app")
+                st.session_state.pop("drone_assessment_started_at", None)
+            # Trigger full app rerun so the results fragment picks up new data
+            if need_app_rerun:
+                st.rerun(scope="app")
 
     # ---- RESULTS FRAGMENT ----
     @st.fragment
