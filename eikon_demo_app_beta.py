@@ -687,11 +687,12 @@ def get_chat_reasoning_traces(api_key: str, since_index: int = 0) -> Dict[str, A
     """Fetch chat reasoning traces from the backend endpoint."""
     try:
         payload = {"api_key": api_key, "since_index": since_index}
-        r = requests.post(EIKON_API_ENDPOINTS["chat_reasoning_traces"], json=payload, timeout=10)
+        r = requests.post(EIKON_API_ENDPOINTS["chat_reasoning_traces"], json=payload, timeout=30)
         if r.ok:
             return r.json()
-    except Exception:
-        pass
+        print(f"[reasoning_traces] non-OK response {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"[reasoning_traces] request failed: {e}")
     return {"traces": [], "latest_index": since_index, "is_complete": False}
 
 
