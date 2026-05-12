@@ -408,6 +408,26 @@ def get_user_credit_balance(api_key: str) -> Optional[float]:
     return balance
 
 
+def format_credit_balance(balance: float) -> str:
+    """Compact credit-balance display so the header doesn't get crowded at high balances.
+
+    < 10:         2 decimal places (e.g. "5.42")
+    10–999:       0 decimal places (e.g. "42", "542")
+    1,000–999K:   "K" suffix, 1 dp dropped when whole (e.g. "1.5K", "12K")
+    1M+:          "M" suffix, 1 dp dropped when whole (e.g. "1.2M", "3M")
+    """
+    abs_balance = abs(balance)
+    if abs_balance < 10:
+        return f"{balance:,.2f}"
+    if abs_balance < 1000:
+        return f"{balance:,.0f}"
+    if abs_balance < 1_000_000:
+        value = balance / 1000
+        return f"{int(value)}K" if value == int(value) else f"{value:.1f}K"
+    value = balance / 1_000_000
+    return f"{int(value)}M" if value == int(value) else f"{value:.1f}M"
+
+
 def search_locations(
     prompt: str,
     api_key: str,
@@ -831,6 +851,47 @@ def get_location_description(
     except Exception as e:
         st.error(f"Context error: {str(e)}")
         return None
+
+
+def get_location_image_with_retry(
+    lat: float,
+    lon: float,
+    resolution: str,
+    api_key: str,
+    max_attempts: int = 8
+) -> Optional["Image.Image"]:
+    """Fetch a location image, retrying on transient failures.
+
+    The upstream image endpoint occasionally returns 500s (e.g. SSL record-layer
+    errors from the Spark backend), in which case the SDK returns None. The
+    Search tab's inspect view must never display a blank image, so we retry
+    with exponential backoff capped at 8s between attempts.
+    """
+    backoff = 1.0
+    last_error: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            img = eikon.context.get_location_image(
+                lat=lat,
+                lon=lon,
+                resolution=resolution,
+                user_api_key=api_key
+            )
+            if img is not None:
+                return img
+            last_error = None
+        except Exception as e:
+            last_error = e
+        if attempt < max_attempts:
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 8.0)
+    if last_error is not None:
+        st.warning(
+            f"Image fetch failed after {max_attempts} attempts ({type(last_error).__name__}: {last_error})."
+        )
+    else:
+        st.warning(f"Image unavailable after {max_attempts} attempts.")
+    return None
 
 
 def calculate_visual_similarity(
@@ -2330,10 +2391,20 @@ def render_location_cards(results_df: pd.DataFrame):
                 appropriate_resolution = "medium"
             if h3.h3_get_resolution(location_id)==7:
                 appropriate_resolution = "low"
-            st.image(eikon.context.get_location_image(lat=lat,
-                                                        lon=lon,
-                                                        resolution=appropriate_resolution,
-                                                        user_api_key=st.session_state.api_key))
+
+            inspect_img = get_location_image_with_retry(
+                lat=lat,
+                lon=lon,
+                resolution=appropriate_resolution,
+                api_key=st.session_state.api_key
+            )
+            if inspect_img is not None:
+                st.image(inspect_img)
+            else:
+                # All retries failed — give the user a manual retry path so the
+                # inspect view never silently stays blank.
+                if st.button("Retry image fetch", key=f"retry_img_{location_id}"):
+                    st.rerun()
 
 
         with detail_col2:
@@ -4142,9 +4213,9 @@ def render_drone_corridor_tab():
             origin_coords = (orig_lat, orig_lon)
             dest_coords = (dest_lat, dest_lon)
         else:
-            orig_hex_input = st.text_input("Origin H3 Hex ID", value="87195d360ffffff",
+            orig_hex_input = st.text_input("Origin H3 Hex ID", value="8919768cd4fffff",
                                            key="drone_orig_hex")
-            dest_hex_input = st.text_input("Destination H3 Hex ID", value="87194ad51ffffff",
+            dest_hex_input = st.text_input("Destination H3 Hex ID", value="89192b32e37ffff",
                                            key="drone_dest_hex")
             try:
                 origin_coords = h3.h3_to_geo(orig_hex_input)
@@ -5467,7 +5538,7 @@ def render_main_app():
         st.markdown(f'''
         <div class="credits-box">
             <div class="credits-label">Credit Balance</div>
-            <div class="credits-value"><span class="credits-currency">£</span>{credit_balance:,.2f}</div>
+            <div class="credits-value"><span class="credits-currency">£</span>{format_credit_balance(credit_balance)}</div>
         </div>
         ''', unsafe_allow_html=True)
 
