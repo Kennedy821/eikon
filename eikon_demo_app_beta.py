@@ -98,7 +98,7 @@ def _load_login_background_image() -> Tuple[Optional[str], bool]:
 LOGIN_BACKGROUND_DATA_URI, LOGIN_BACKGROUND_AVAILABLE = _load_login_background_image()
 
 # API endpoints
-EIKON_API_BASE_URL = "https://slugai.pagekite.me"
+EIKON_API_BASE_URL = "https://slugai.eikon.ngrok.app"
 EIKON_API_ENDPOINTS = {
     "base_url": EIKON_API_BASE_URL,
     "check_credits": f"{EIKON_API_BASE_URL}/check_eikon_api_credits",
@@ -1167,6 +1167,10 @@ def send_chat_message(
     if not EIKON_AVAILABLE:
         return _generate_mock_chat_response(user_message)
 
+    if not api_key:
+        st.error("Missing API key — sign in before sending a chat message.")
+        return None
+
     try:
         base_url = EIKON_API_ENDPOINTS["base_url"]
         queue_submit_url = f'{base_url}/eikon_ai_chat_queue'
@@ -1189,7 +1193,7 @@ def send_chat_message(
             st.error("Chat request timed out submitting to the queue. Please try again.")
             return None
         if not submit_response.ok:
-            st.error(f"Failed to submit chat request: {submit_response.status_code}")
+            st.error(f"Failed to submit chat request: {submit_response.status_code} — {submit_response.text[:300]}")
             return None
 
         job_id = submit_response.json().get("job_id")
@@ -1231,8 +1235,19 @@ def send_chat_message(
                     timeout=200
                 )
 
-                if not status_response.ok and status_response.status_code != 500:
-                    st.error(f"Queue status check failed: {status_response.status_code}")
+                if status_response.status_code == 500:
+                    # Treat 500s as transient blips, but count them so we bail
+                    # if they persist instead of polling the full 40 minutes.
+                    _consecutive_status_failures += 1
+                    if _consecutive_status_failures >= _max_consecutive_failures:
+                        st.error(
+                            f"Chat status endpoint returned 500 for "
+                            f"{_consecutive_status_failures} consecutive polls. Giving up."
+                        )
+                        return None
+                    continue
+                if not status_response.ok:
+                    st.error(f"Queue status check failed: {status_response.status_code} — {status_response.text[:300]}")
                     return None
 
                 status_data = status_response.json()
@@ -2665,7 +2680,6 @@ def render_search_tab():
                 st.markdown("**Stage 1 - Query Processing:**")
                 if stage_1_info.get('cleaned'):
                     st.markdown(f"- Original: *{stage_1_info.get('original', search_prompt)}*")
-                    st.markdown(f"- Optimized: *{stage_1_info.get('cleaned')}*")
                 st.markdown("---")
 
             final_progress = check_search_progress(user_api_key)
@@ -4402,7 +4416,7 @@ def render_drone_corridor_tab():
 
                                 import requests as _req
                                 _resp = _req.post(
-                                    "http://slugai.pagekite.me/eikon_safest_route_pathfinder",
+                                    f"{EIKON_API_BASE_URL}/eikon_safest_route_pathfinder",
                                     json={
                                         "origin": origin_hex,
                                         "orig": origin_hex,
@@ -5208,6 +5222,13 @@ def render_ai_chat_tab():
 
         # Process new user input
         if user_input:
+            # Refuse new messages while a request is already in flight,
+            # otherwise we'd clobber `eikon_pending_request` and orphan the
+            # in-flight backend job.
+            if st.session_state.get('eikon_pending_request'):
+                st.toast("EIKON is still answering your previous message — please wait.")
+                st.stop()
+
             # Add user message to history immediately so it renders in the
             # message loop on next rerun
             st.session_state.chat_messages.append({
