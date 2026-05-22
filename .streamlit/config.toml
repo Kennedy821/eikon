@@ -1,0 +1,8 @@
+[server]
+enableWebsocketCompression = false
+enableXsrfProtection = false
+maxUploadSize = 200
+
+# WebSocket keep-alive tuning
+pingInterval = 30
+pingTimeout = 120
