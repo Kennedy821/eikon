@@ -103,6 +103,8 @@ EIKON_API_ENDPOINTS = {
     "base_url": EIKON_API_BASE_URL,
     "check_credits": f"{EIKON_API_BASE_URL}/check_eikon_api_credits",
     "search_queue": f"{EIKON_API_BASE_URL}/eikon_search_agent_api_queue",
+    "search_submit": f"{EIKON_API_BASE_URL}/eikon_search_agent_api_uk_submit",
+    "search_status": f"{EIKON_API_BASE_URL}/eikon_search_agent_api_uk_status",
     "objects_detected": f"{EIKON_API_BASE_URL}/get_objects_detected_in_location",
     "yolo_detection": f"{EIKON_API_BASE_URL}/yolo_object_detection_on_image",
     "check_job_complete": f"{EIKON_API_BASE_URL}/check_if_eikon_search_agent_api_job_complete_web",
@@ -456,9 +458,8 @@ def search_locations(
         return _generate_mock_search_results(prompt)
 
     try:
-        # Use the queue endpoint to avoid OOM errors on the server
-        # The queue processes requests one at a time
-        base_api_address = EIKON_API_ENDPOINTS["search_queue"]
+        # Submit + poll instead of one long-blocking POST so ngrok can't kill
+        # the connection mid-search while the worker keeps running.
         payload = {
             "prompt": prompt,
             "api_key": api_key,
@@ -468,19 +469,47 @@ def search_locations(
         if spatial_resolution == "UK - area" and borough:
             payload['selected_area'] = borough
 
-        r = requests.post(base_api_address, json=payload, timeout=10000)
+        submit_response = requests.post(
+            EIKON_API_ENDPOINTS["search_submit"], json=payload, timeout=30
+        )
+        if not submit_response.ok:
+            st.error(f"Search submit failed: {submit_response.status_code}")
+            return None
 
-        if r.ok:
-            response_data = r.json()
-            if "successful_job_completion" in response_data:
-                # Parse results from the response
-                results_json = response_data["successful_job_completion"]
-                results = pd.DataFrame.from_dict(json.loads(results_json))
-            else:
-                st.error(f"Search failed: {response_data}")
-                return None
-        else:
-            st.error(f"Search request failed: {r.status_code}")
+        job_id = submit_response.json().get("job_id")
+        if not job_id:
+            st.error(f"Search submit returned no job_id: {submit_response.json()}")
+            return None
+
+        STATUS_POLL_INTERVAL = 10
+        MAX_WAIT_SECONDS = 2 * 60 * 60
+        deadline = time.time() + MAX_WAIT_SECONDS
+        results = None
+
+        while time.time() < deadline:
+            try:
+                status_response = requests.get(
+                    EIKON_API_ENDPOINTS["search_status"],
+                    params={"job_id": job_id},
+                    timeout=30,
+                )
+            except requests.exceptions.RequestException:
+                time.sleep(STATUS_POLL_INTERVAL)
+                continue
+
+            if not status_response.ok:
+                time.sleep(STATUS_POLL_INTERVAL)
+                continue
+
+            status_data = status_response.json()
+            if status_data.get("status") == "completed":
+                results = pd.DataFrame.from_dict(json.loads(status_data["result"]))
+                break
+
+            time.sleep(STATUS_POLL_INTERVAL)
+
+        if results is None:
+            st.error(f"Search timed out waiting for job {job_id}")
             return None
 
         # Convert H3 location IDs to latitude/longitude if not already present
@@ -3115,7 +3144,7 @@ def render_context_tab():
         resolution = st.select_slider(
             "Analysis Resolution",
             options=["low", "medium", "high"],
-            value="medium",
+            value="high",
             help="Higher resolution provides more detailed descriptions"
         )
 
