@@ -5477,11 +5477,25 @@ def fetch_previous_searches(api_key: str, num_results: int = 10) -> Optional[lis
         )
         if not raw_results:
             return None
+        # The server joins JSON-encoded dicts with "|" and the library splits on "|".
+        # When a JSON value itself contains "|", that split shatters one result
+        # across several fragments. Rejoin and scan for valid JSON object boundaries.
+        full = "|".join(raw_results)
+        decoder = json.JSONDecoder()
         parsed = []
-        for result_json in raw_results:
-            df = pd.DataFrame.from_dict(json.loads(result_json))
-            parsed.append(df)
-        return parsed
+        i, n = 0, len(full)
+        while i < n:
+            while i < n and full[i] == "|":
+                i += 1
+            if i >= n:
+                break
+            try:
+                obj, end = decoder.raw_decode(full, i)
+                parsed.append(pd.DataFrame.from_dict(obj))
+                i = end
+            except json.JSONDecodeError:
+                i += 1
+        return parsed or None
     except Exception:
         return None
 
