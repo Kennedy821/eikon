@@ -1,0 +1,17 @@
+Eikon API Demo, Trial and Workshop Privacy Policy
+
+This GPT uses Eikon API Actions to provide location context, H3-cell context, similarity outputs, search outputs, and other geospatial intelligence features for demos, trials, workshops, and product evaluation.
+
+When you use the GPT, your prompt may cause ChatGPT to send request data to the Eikon API. This may include latitude/longitude coordinates, H3 cell IDs, resolution levels, endpoint names, search queries, comparison parameters, and other location-related inputs needed to answer your request.
+
+We log API interactions to operate the service, manage demo and trial access, understand which users are using which endpoints, monitor usage, apply rate limits, debug errors, prevent abuse, and charge or deduct credit balances appropriately. Logs may include timestamps, endpoint names, request parameters, response status, latency, API key or account identifiers, credit usage, and related operational metadata.
+
+Do not submit sensitive personal data, private residential addresses, passwords, API keys, financial information, health information, confidential business information, or any information you are not authorised to share.
+
+Data is used to operate and improve the Eikon API, support demos and trials, provide workshop access, manage user accounts and credit balances, improve reliability, and understand product usage. We do not sell demo, trial, or workshop request data.
+
+Requests may be processed through OpenAI/ChatGPT and our API hosting, tunnelling, logging, cloud, or infrastructure providers.
+
+Demo, trial, and workshop logs are retained only as long as reasonably necessary for service operation, debugging, credit accounting, security, product evaluation, and legitimate business or legal purposes.
+
+For questions, access requests, or deletion requests, contact: [your email].
